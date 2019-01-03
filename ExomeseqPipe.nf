@@ -426,8 +426,9 @@ process filtered_Mutect_VCFs{
 Step 8  Collapse and convert annoted file into MAF file for futher analysis 
 */
 
-annovarTXT.collectFile { file -> ['filelist.txt', file[4].name + '\n'] }
-            .set { annoFile_sample }
+annovarTXT.map { variantCaller,idPatient, idSampleNormal, idSampleTumor, vcfFiltered ->
+  "${vcfFiltered}\t${idSampleTumor}\n"
+}.collectFile(name: 'filelist.txt').set { annoFile_sample }
 
 process Convert2MAF{
         tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
