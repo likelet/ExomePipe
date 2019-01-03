@@ -28,250 +28,456 @@ if (params.help) {
 
 
 
+// setting annotation file path 
+referenceMap = defineReferenceMap()
 
-//default values
-params.help = null
-params.input_folder = './'
-params.out_folder = './'
+// parsing tsvPath 
+if (params.sample) tsvPath = params.sample
 
-// database file folder genome ref files
+// set fastq or bam file for further analysis
+fastqFiles = Channel.empty()
+bamFiles = Channel.empty()
+if (tsvPath) {
+  tsvFile = file(tsvPath)
+  fastqFiles = extractFastq(tsvFile)
+} else{
+    log.info LikeletUtils.print_red("no sample table specified, plz specified a sample table ") 
+    exit 1
+}
 
-// database file folder genome ref files
-params.genome_bwa_idex="/data/database/human/hg19/bwaIndex/genome"
-params.genome_ref_exome="/data/database/human/hg19/bwaIndex/genome.fa"
-
-params.gatkpath="/data/software/GenomeAnalysisTK-3.8-0-ge9d806836/GenomeAnalysisTK.jar"
-params.knownfile1="/data/database/human/hg19/forGATK/Mills_and_1000G_gold_standard.indels.hg19.sites.vcf"
-params.knownfile2="/data/database/human/hg19/forGATK/1000G_phase1.indels.hg19.sites.vcf"
-params.knownfile3="/data/database/human/hg19/forGATK/dbsnp_138.hg19.vcf"
-params.genomeref="/data/database/human/hg19/bwaIndex/genome.fa"
-params.genomeindex="/data/database/human/hg19/bwaIndex/genome.fa.fai"
-params.genomedict="/data/database/human/hg19/bwaIndex/genome.dict"
-
-gatkpath=params.gatkpath
-knownfile1=file(params.knownfile1)
-knownfile2=file(params.knownfile2)
-knownfile3=file(params.knownfile3)
-
-genomeref=file(params.genomeref)
-genomeindex=file(params.genomeindex)
-genomedict=file(params.genomedict)
-
-
-
-// software
-//
-
-// fastq file
-params.fastq_ext = "*_{1,2}.fq.gz"
-
-reads=params.fastq_ext
-genome_bwa_idex = params.genome_bwa_idex
-genome_ref_exome = file(params.genome_ref_exome)
-
-bwa_index = Channel.fromPath("${params.genome_bwa_idex}*")
-
-
-// read fastq
-Channel.fromFilePairs(reads, size: 2)
-                .ifEmpty {
-            exit 1, print_red("Cannot find any reads matching: !{reads}\nNB: Path needs to be enclosed in quotes!\n")
-        }
-        .into {reads_for_bwa}
-
+//start message 
+startMessage()
+/*
+// Step 1 Alignment
+*/
 // alignment 
-        process bwa_aligment{
-            tag { file_tag }
-            maxForks 5
+process bwa_aligment{
+        tag { file_tag }
 
-            input:
-            set val(samplename), file(pair) from reads_for_bwa
-            file  bwa_id from bwa_index.collect()
-
-
-            output:
-            set val(file_tag_new), file("${file_tag_new}.bam") into mapped_bam
-           
-            shell:
-            file_tag_new=samplename
-            file_tag=file_tag_new
-            bwa_threads = 10
-	
-            '''
-                
- #               mkdir tmp
-
-                bwa mem -t !{bwa_threads} genome.fa -M -R '@RG\tID:noID\tPL:ILLUMINA\tLB:noLB\tSM:'!{file_tag_new}'' !{pair[0]} !{pair[1]}  > !{file_tag_new}.sam
-                sambamba  view -S -f bam -t !{bwa_threads} !{file_tag_new}.sam > !{file_tag_new}.bam                
-                rm -rf !{file_tag_new}.sam
-                '''
-        }
-
-process bamfile_process{
-            tag { file_tag }
-            maxForks 5
         input:
-            set val(file_tag), file(bamfile) from mapped_bam
+        set idPatient, status, idSample, file(fastqFile1), file(fastqFile2) from fastqFiles
+        file  bwa_id from bwa_index.collect()
 
 
         output:
-            set val(file_tag_new), file("${file_tag_new}_sorted_dedup.bam") into mapped_sorted_dedup_bam_from_sambamba,mapped_sorted_dedup_bam_from_sambamba2
-        shell:
-            file_tag_new = file_tag
-            sambamba_threads = 6
+        set idPatient, status, idSample, file("${idSample}.bam") into (mappedBam, mappedBamForQC)
+        
+        script:
+        file_tag_new=samplename
+        file_tag=file_tag_new
+        bwa_threads = 10
 
-            '''
-                sambamba sort  -t !{sambamba_threads} -o !{file_tag_new}_sorted.bam !{file_tag_new}.bam
-                sambamba markdup -t !{sambamba_threads}  !{file_tag_new}_sorted.bam !{file_tag_new}_sorted_dedup.bam
-		        rm !{file_tag_new}_sorted.bam                
+        readGroup = "@RG\\tID:niID\\tPU:noPU\\tSM:${idSample}\\tLB:${idSample}\\tPL:illumina"
 
-'''
+        """
+        bwa mem -t ${task.cpus} genome.fa -M -R \"${readGroup}\" ${fastqFile1} ${fastqFile2} | \
+        samtools sort --threads ${task.cpus} -m 2G - > ${idSample}.bam
+        """
         }
 
 
-process RealignerTargetCreator {
-	tag {file_tag}
-    maxForks 5
- 	input: 
- 	file genomeref
-	set val(samplename),file(bam) from mapped_sorted_dedup_bam_from_sambamba
-	file knownfile1
-	file knownfile2
-	file genomeindex
-	file genomedict
-	
-	output:
-	set val(file_tag_new),file("${file_tag_new}_target_intervals.list") into intervalist
+/*
+// Step 2 BAM QC
+*/
+// bamQC
+process BAMqcByQualiMap {
+        tag {idPatient + "-" + idSample}
+        publishDir  path: { params.outdir + "/Result/Qualimap" }, mode: 'move', overwrite: true
 
-
-	shell:
-	file_tag=samplename
-	file_tag_new=file_tag
-	'''
-	sambamba index !{bam}
-	java -jar !{gatkpath} -T RealignerTargetCreator -fixMisencodedQuals -R !{genomeref} -I !{bam} -known !{knownfile1} -known !{knownfile2} -o !{file_tag_new}_target_intervals.list -nt 6
-	
-	'''
-}
-
-//step2
-
-process IndelRealigner {
-        tag {file_tag}
-        maxForks 5
         input:
-            file genomeref
-            set val(samplename),file(intervalfile) from intervalist
-            set val(samplename),file(bamfile) from mapped_sorted_dedup_bam_from_sambamba2
-            file knownfile1
-            file knownfile2
-            file genomeindex
-            file genomedict
+            set idPatient, status, idSample, file(bam) from mappedBamForQC
 
         output:
-            set val(file_tag_new),file("${file_tag_new}_sort_dedup_realigned.bam") into realignmentBam,realignmentBam2
-            set val(file_tag_new),file("${file_tag_new}_sort_dedup_realigned.bai") into realignmentBai,realignmentBai2
-            shell:
-            file_tag=samplename
-            file_tag_new=file_tag
-        '''
-	sambamba index !{bamfile}
-	java -jar !{gatkpath} -T IndelRealigner -R !{genomeref} -I !{bamfile} \
-        -targetIntervals !{intervalfile} \
-	-known !{knownfile1} -known !{knownfile2} -fixMisencodedQuals -o !{file_tag_new}_sort_dedup_realigned.bam 
+            file(idSample) into bamQCmappedReport
 
-        '''
-}
-//step3 
-process BaseRecalibrator{
-    tag {file_tag}
-    maxForks 5
+        when: !params.runQualimap
+
+        script:
+        """
+        qualimap --java-mem-size=${task.memory.toGiga()}G \
+        bamqc \
+        -bam ${bam} \
+        --paint-chromosome-limits \
+        --genome-gc-distr HUMAN \
+        -nt ${task.cpus} \
+        -skip-duplicated \
+        --skip-dup-mode 0 \
+        -outdir ${idSample} \
+        -outformat HTML
+        """
+        }
+
+
+/*
+// Step 3 BAM markDuplicates
+*/
+// markDuplicates
+process MarkDuplicates {
+        tag {idPatient + "-" + idSample}
+
         input:
-            file genomeref
-            set val(samplename),file(bamfile) from realignmentBam
-            set val(samplename),file(baifile) from realignmentBai
-            file knownfile1
-            file knownfile2
-            file knownfile3
-            file genomeindex
-            file genomedict
+            set idPatient, status, idSample, file("${idSample}.bam") from mappedBam
 
         output:
-            set val(file_tag_new),file("${file_tag_new}_sort_dedup_realigned_recal.grp") into GRPfile
-	
-	shell:
-        file_tag=samplename
-        file_tag_new=file_tag
-	'''
-	sambamba index !{bamfile}
-        java -jar !{gatkpath} -T BaseRecalibrator -R !{genomeref} -I !{bamfile} \
-        -knownSites !{knownfile3} -knownSites !{knownfile1} -knownSites !{knownfile2} -fixMisencodedQuals \
-	-o !{file_tag_new}_sort_dedup_realigned_recal.grp  -nct 6 
-#	java -jar $gatkpath -T BaseRecalibrator -R !{genomeref} -I !{bamfile} \
-#	-BQSR !{file_tag_new}_sort_dedup_realigned_recal.grp \
-#	-o !{file_tag_new}_sort_dedup_realigned_post_recal.grp  
-        '''
+            set idPatient, file("${idSample}_${status}.md.bam"), file("${idSample}_${status}.md.bai") into duplicateMarkedBams
+            set idPatient, status, idSample, val("${idSample}_${status}.md.bam"), val("${idSample}_${status}.md.bai") into markDuplicatesTSV
+            file ("${idSample}.bam.metrics") into markDuplicatesReport
 
+        script:
+        """
+        gatk --java-options ${params.markdup_java_options} \
+        MarkDuplicates \
+        --MAX_RECORDS_IN_RAM 50000 \
+        --INPUT ${idSample}.bam \
+        --METRICS_FILE ${idSample}.bam.metrics \
+        --TMP_DIR . \
+        --ASSUME_SORT_ORDER coordinate \
+        --CREATE_INDEX true \
+        --OUTPUT ${idSample}_${status}.md.bam
+        """
 }
 
-process PrintReads{
-        tag {file_tag}
-        maxForks 5
-        publishDir pattern: "*_recal.ba*", path: { params.out_folder + "/Result/RecalBam" }, mode: 'link', overwrite: true
+/*
+// Step 4 GATK base recalliberation
+*/
+process CreateRecalibrationTable {
+
+        tag {idPatient + "-" + idSample}
+
+        input:
+            set idPatient, status, idSample, file(bam), file(bai) from duplicateMarkedBams // realignedBam
+            set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex), file(knownIndels), file(knownIndelsIndex), file(intervals) from Channel.value([
+            referenceMap.genomeFile,
+            referenceMap.genomeIndex,
+            referenceMap.genomeDict,
+            referenceMap.dbsnp,
+            referenceMap.dbsnpIndex,
+            referenceMap.knownIndels,
+            referenceMap.knownIndelsIndex,
+            referenceMap.intervals,
+            ])
+
+        output:
+            set idPatient, status, idSample, file("${idSample}.recal.table") into recalibrationTable
+            set idPatient, status, idSample, val("${idSample}_${status}.md.bam"), val("${idSample}_${status}.md.bai"), val("${idSample}.recal.table") into recalibrationTableTSV
+
+        script:
+        known = knownIndels.collect{ "--known-sites ${it}" }.join(' ')
+        """
+        gatk --java-options -Xmx${task.memory.toGiga()}g \
+        BaseRecalibrator \
+        --input ${bam} \
+        --output ${idSample}.recal.table \
+        --tmp-dir /tmp \
+        -R ${genomeFile} \
+        -L ${intervals} \
+        --known-sites ${dbsnp} \
+        ${known} \
+        --verbosity INFO
+        """
+}
+
+process RecalibrateBam {
+        tag {idPatient + "-" + idSample}
+
+        publishDir publishDir+"/recal_bam", mode: 'link'
+
+
+        input:
+            set idPatient, status, idSample, file(bam), file(bai), file(recalibrationReport) from recalibrationTable
+            set file(genomeFile), file(genomeIndex), file(genomeDict), file(intervals) from Channel.value([
+            referenceMap.genomeFile,
+            referenceMap.genomeIndex,
+            referenceMap.genomeDict,
+            referenceMap.intervals,
+            ])
+
+        output:
+            set idPatient, status, idSample, file("${idSample}.recal.bam"), file("${idSample}.recal.bai") into recalibratedBam, recalibratedBamForStats
+            set idPatient, status, idSample, val("${idSample}.recal.bam"), val("${idSample}.recal.bai") into recalibratedBamTSV
+
+        script:
+        """
+        gatk --java-options -Xmx${task.memory.toGiga()}g \
+        ApplyBQSR \
+        -R ${genomeFile} \
+        --input ${bam} \
+        --output ${idSample}.recal.bam \
+        -L ${intervals} \
+        --create-output-bam-index true \
+        --bqsr-recal-file ${recalibrationReport}
+        """
+}
+
+
+//=======================================================================
+// call tumor and normal analysis with mutect2 and other softwares
+//=======================================================================
+
+
+/*
+Step 5  Mutect call somatic variations
+*/
+// separate recalibrateBams by status
+bamsNormal = Channel.create()
+bamsTumor = Channel.create()
+recalibratedBam.choice(bamsTumor, bamsNormal) {it[1] == 0 ? 1 : 0}
+//check files
+bamsNormal = bamsNormal.ifEmpty{exit 1, "No normal sample defined, check TSV file: ${tsvFile}"}
+bamsTumor = bamsTumor.ifEmpty{exit 1, "No tumor sample defined, check TSV file: ${tsvFile}"}
+// remove status
+bamsNormal = bamsNormal.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
+bamsTumor = bamsTumor.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
+
+
+
+//split input bed into multiple to help accelerate mutect2 calling 
+process CreateIntervalBeds {
+    tag {intervals.fileName}
 
     input:
-        file genomeref
-	    set val(samplename),file(GRPfile) from GRPfile
-        set val(samplename),file(realignBam) from realignmentBam2
-	    set val(samplename),file(baifile) from realignmentBai2
-	    file knownfile1
-        file knownfile2
-        file knownfile3
-	    file genomeindex
-	    file genomedict
-	
+        file(intervals) from Channel.value(referenceMap.intervals)
+
     output:
-        set val(file_tag_new),file("${file_tag_new}_sort_dedup_realigned_recal.bam") into recalbam      
+        file '*.bed' into bedIntervals mode flatten
 
-    shell:
-        file_tag=samplename
-        file_tag_new=file_tag
-	'''
-	sambamba index !{realignBam}
-        java -jar !{gatkpath} -T PrintReads -R !{genomeref} -fixMisencodedQuals -I !{realignBam} -BQSR !{GRPfile} -o !{file_tag_new}_sort_dedup_realigned_recal.bam -nct 6
-        '''
+    script:
+    // If the interval file is BED format, the fifth column is interpreted to
+    // contain runtime estimates, which is then used to combine short-running jobs
+        """
+        awk -vFS="[:-]" '{
+        name = sprintf("%s_%d-%d", \$1, \$2, \$3);
+        printf("%s\\t%d\\t%d\\n", \$1, \$2, \$3) > name ".bed"
+        }' ${intervals}
+        """
+}
 
+// process interval files 
+    bedIntervals = bedIntervals
+    .map { intervalFile ->
+        def duration = 0.0
+        for (line in intervalFile.readLines()) {
+        final fields = line.split('\t')
+        if (fields.size() >= 5) duration += fields[4].toFloat()
+        else {
+            start = fields[1].toInteger()
+            end = fields[2].toInteger()
+            duration += (end - start) / params.nucleotidesPerSecond
+        }
+        }
+        [duration, intervalFile]
+    }.toSortedList({ a, b -> b[0] <=> a[0] })
+    .flatten().collate(2)
+    .map{duration, intervalFile -> intervalFile}
+
+
+    (bamsNormalTemp, bamsNormal, bedIntervals) = generateIntervalsForVC(bamsNormal, bedIntervals)
+    (bamsTumorTemp, bamsTumor, bedIntervals) = generateIntervalsForVC(bamsTumor, bedIntervals)
+    //combine normal and tumor 
+    bamsAll = bamsNormal.combine(bamsTumor)
+    // Since idPatientNormal and idPatientTumor are the same
+    // It's removed from bamsAll Channel (same for genderNormal)
+    // /!\ It is assumed that every sample are from the same patient
+    bamsAll = bamsAll.map {
+    idPatientNormal, idSampleNormal, bamNormal, baiNormal, idPatientTumor, idSampleTumor, bamTumor, baiTumor ->
+    [idPatientNormal, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
+    }
+    // combine interval and bamsALL
+    bamsTumorNormalIntervals = bamsAll.spread(bedIntervals)
+
+
+// Mutect 
+process RunMutect2 {
+        tag {idSampleTumor + "_vs_" + idSampleNormal + "-" + intervalBed.baseName}
+
+        input:
+            set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor), file(intervalBed) from bamsTumorNormalIntervals
+            set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
+            referenceMap.genomeFile,
+            referenceMap.genomeIndex,
+            referenceMap.genomeDict,
+            referenceMap.dbsnp,
+            referenceMap.dbsnpIndex
+            ])
+
+        output:
+            set val("mutect2"), idPatient, idSampleNormal, idSampleTumor, file("${intervalBed.baseName}_${idSampleTumor}_vs_${idSampleNormal}.vcf") into mutect2Output
+        
+        script:
+        """
+            gatk --java-options "-Xmx${task.memory.toGiga()}g" \
+                Mutect2 \
+                -R ${genomeFile}\
+                -I ${bamTumor}  -tumor ${idSampleTumor} \
+                -I ${bamNormal} -normal ${idSampleNormal} \
+                -L ${intervalBed} \
+                -O ${intervalBed.baseName}_${idSampleTumor}_vs_${idSampleNormal}.vcf
+        """
+}
+mutect2Output = mutect2Output.groupTuple(by:[0,1,2,3])
+
+// merge VCF from split vcf
+process ConcatVCF {
+        tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
+
+        input:
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcFiles) from mutect2Output
+            file(genomeIndex) from Channel.value(referenceMap.genomeIndex)
+
+        output:
+                // we have this funny *_* pattern to avoid copying the raw calls to publishdir
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("*_*.vcf.gz"), file("*_*.vcf.gz.tbi") into vcfConcatenated
+                // TODO DRY with ConcatVCF
+
+        script:
+        outputFile = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}.vcf"
+
+        if(params.targetBED)		// targeted
+                concatOptions = "-i ${genomeIndex} -c ${task.cpus} -o ${outputFile} -t ${params.targetBED}"
+            else										// WGS
+                concatOptions = "-i ${genomeIndex} -c ${task.cpus} -o ${outputFile} "
+
+            """
+            concatenateVCFs.sh ${concatOptions}
+        """
+}
+
+/*
+Step 6  Filter Mutect output 
+*/
+// filtered VCF
+process filtered_Mutect_VCFs{
+        tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
+
+        publishDir path: {params.outdir +"/Mutect2_filtered_VCF"}, mode: "copy"
+
+        input:
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcf), file(tbi) from vcfConcatenated
+            set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
+                referenceMap.genomeFile,
+                referenceMap.genomeIndex,
+                referenceMap.genomeDict
+            ])
+
+        output:
+                // we have this funny *_* pattern to avoid copying the raw calls to publishdir
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outputFile}") into vcfHardFiltered
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${vcf}.somatic.filter_mark.vcf.gz") into vcfMarkedFiltered
+
+        script:
+        outputFile = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}.filtered.vcf"
+
+        """
+            #run filter Mutect
+            gatk --java-options "-Xmx${task.memory.toGiga()}g" \
+                FilterMutectCalls \
+                -V ${vcf} \
+                -O ${vcf}.somatic.filter_mark.vcf.gz
+
+            # hard filter 
+
+            gatk --java-options "-Xmx${task.memory.toGiga()}g" \
+            SelectVariants \
+            -R ${genomeFile} \
+            -V ${vcf}.somatic.filter_mark.vcf.gz \
+            -select "vc.isNotFiltered()" \
+            -O ${outputFile}
+
+        """
+}
+
+/*
+Step 7  Annotated filter variants by Annovar 
+*/
+
+process filtered_Mutect_VCFs{
+        tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
+
+        publishDir path: {params.outdir +"/Annotaed_Filtered_VAFs"}, mode: "copy"
+
+        input:
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcfFiltered) from vcfHardFiltered
+            set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
+                referenceMap.genomeFile,
+                referenceMap.genomeIndex,
+                referenceMap.genomeDict
+            ])
+
+        output:
+                // we have this funny *_* pattern to avoid copying the raw calls to publishdir
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("*.anno.txt") into annovarTXT
+            
+        script:
+        outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
+
+        """
+            table_annovar.pl example/ex2.vcf humandb/ -buildver ${params.annovarDB} \
+                    -out ${outName}.somatic.anno -remove \
+                    -otherinfo \
+                    -protocol refGene,cosmic70,avsnp147,ALL.sites.2015_08_edit,EAS.sites.2015_08_edit,esp6500siv2_all,exac03,ljb26_all,clinvar \
+                    -operation g,f,f,f,f,f,f,f,f \
+                    -nastring . \
+                    -vcfinput
+
+        """
+}
+
+/*
+Step 8  Collapse and convert annoted file into MAF file for futher analysis 
+*/
+
+annovarTXT.collectFile { file -> ['filelist.txt', file[4].name + '\n'] }
+            .set { annoFile_sample }
+
+process Convert2MAF{
+        tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
+
+        publishDir path: {params.outdir +"/Mutect2_merged_MAF"}, mode: "copy"
+
+        input:
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(annotatedTxt) from annovarTXT.collect()
+            file mapFile from annoFile_sample
+        output:
+            set variantCaller, file("${variantCaller}_Merged.MAF") into Mutect_mergedMAF
+        script:
+
+        outName = "${variantCaller}_Merged"
+
+        """
+            perl ${baseDir}/bin/Mutect_Annovar_to_MAF.pl > ${outName}.MAF
+
+        """
 }
 
 
-// copy number analysis
-//bedtools 2.24 early
-//DNAcopy R package
-//ADTex
-//python 2.7
+// Downstream analysis
+// Copy number analysis
+// Facet.R analysis for purity analysis
+// Freec for WES
+
 process runADTex{
     tag {file_tag}
 
     input:
-    set val(samplename),file(tumorBam)  from tumorBam_for_ADTex
-    set val(normalfilename),file(normalBam) from normalBam_for_ADTex
-    file targetBed
+        set val(samplename),file(tumorBam),file(normalBam)  from tumorBam_for_ADTex
+        file targetBed
 
     output:
 
-    et val(file_tag_new),file("${file_tag_new}_ADTex_cnv") into ADTexOutFolder
+        set val(file_tag_new),file("${file_tag_new}_ADTex_cnv") into ADTexOutFolder
 
-
+    when: !params.runADTex
     shell:
-    file_tag=samplename
-    file_tag_new=file_tag
+        file_tag=samplename
+        file_tag_new=file_tag
 
-    '''
-    mkdir tmp 
-    python !{adtexpath} --normal !{normalBam} --tumor !{tumorBam} --bed !{targetBad} --out !{file_tag_new}_ADTex_cnv
-    '''
+        '''
+        mkdir tmp 
+        python !{adtexpath} --normal !{normalBam} --tumor !{tumorBam} --bed !{targetBad} --out !{file_tag_new}_ADTex_cnv
+        '''
 
-}
+        }
+
 
 
 // strelka2 analysis
@@ -279,44 +485,111 @@ process runStrelka2{
     tag {file_tag}
 
     input:
-    set val(samplename),file(tumorBam)  from tumorBam_for_strelka
-    set val(normalfilename),file(normalBam) from normalBam_for_strelka
-    file targetBed
-    file genome_ref_exome
+        set val(samplename),file(tumorBam)  from tumorBam_for_strelka
+        set val(normalfilename),file(normalBam) from normalBam_for_strelka
+        file targetBed
+        file genome_ref_exome
 
     output:
 
-    set val(file_tag_new),file("${file_tag_new}_somatic.*") into strelka_vcf_gz
+        set val(file_tag_new),file("${file_tag_new}_somatic.*") into strelka_vcf_gz
 
+    when: !params.runStrelka2
 
     shell:
-    file_tag=samplename
-    file_tag_new=file_tag
-    thread=${strelka_thread}
+        file_tag=samplename
+        file_tag_new=file_tag
+        thread=${strelka_thread}
 
 
-    '''
- 
-        # run configuration 
+        """
+    
+            # run configuration 
+            
+            python !{strelkapath}/bin/configureStrelkaSomaticWorkflow.py \\
+                --normalBam ${normalBam} \\
+                --tumorBam ${tumorBam} \\
+                --ref ${genome_ref_exome} \\
+                --callRegions $targetBed \\
+                --runDir ./ \\
+                --exome
+            python ./runWorkflow.py -m local -j !{thread}
+            
+            mv results/variants/somatic.snvs.vcf.gz ${file_tag_new}_somatic.snv.vcf.gz
+            mv results/variants/somatic.indels.vcf.gz ${file_tag_new}_somatic.indels.vcf.gz 
+            mv results/variants/somatic.snvs.vcf.gz.tbi ${file_tag_new}_somatic.snv.vcf.gz.tbi
+            mv results/variants/somatic.indels.vcf.gz.tbi ${file_tag_new}_somatic.indels.vcf.gz.tbi
+        """
+
+        }
+// gc base file for  run Sequenza
+process prepareSequenza{
+    tag "produce GC file"
+    storeDir { params.outdir + "/RequiredFiles" }
+
+    input:
+
+        file genome_ref_exome
+
+    output:
+
+        file " hg19.gc50Base.txt.gz" into genome_gc_file
+    when: !params.runSequenza
+
+    shell:
+        """
+        sequenza−utils.py GC−windows −w 50 ${genome_ref_exome} | gzip > hg19.gc50Base.txt.gz
+        """
+
+        }
+
+process runSequenza_python{
+        tag {file_tag}
+
+        input:
+
+            set val(samplename),file(tumorbam) from tumorBam_for_sequenza
+            set val(normalName),file(normalbam) from normalBam_for_sequenza
+            file targetBed
+            file genome_gc_file
+            file genome_ref_exome
+
+        output:
+            set val(samplename),file("stage2.seqz.gz") into sequenza_bin_data
+
+        when: !params.runSequenza
+        shell:
+            file_tag = samplename
+            """
+            #stage 1 
+            sequenza-utils bam2seqz  -n ${normalBam} -t ${tumorbam}\
+                    --fasta ${genome_ref_exome} -gc ${genome_gc_file} > stage1.seqz.gz
+            #stage 2  binning 
+            sequenza-utils seqz-binning -w 200 -s stage1.seqz.gz | gzip > stage2.seqz.gz
+            """
+
+        }
+process runSequenza_R{
+        tag {file_tag}
+
+        input:
+
+        set val(samplename),file(bin_data) from sequenza_bin_data
+
+        output:
+
+        when: !params.runSequenza
+        shell:
+        """
         
-        python !{strelkapath}/bin/configureStrelkaSomaticWorkflow.py \\
-            --normalBam !{normalBam} \\
-            --tumorBam !{tumorBam} \\
-            --ref !{genome_ref_exome} \\
-            --callRegions $targetBed \\
-            --runDir ./ \\
-            --exome
-        python ./runWorkflow.py -m local -j !{thread}
-        
-        mv results/variants/somatic.snvs.vcf.gz ${file_tag_new}_somatic.snv.vcf.gz
-        mv results/variants/somatic.indels.vcf.gz ${file_tag_new}_somatic.indels.vcf.gz 
-        mv results/variants/somatic.snvs.vcf.gz.tbi ${file_tag_new}_somatic.snv.vcf.gz.tbi
-        mv results/variants/somatic.indels.vcf.gz.tbi ${file_tag_new}_somatic.indels.vcf.gz.tbi
-    '''
+        """
 
-}
+        }
 
-//run compelete
+
+
+
+
 
 //pipeline log
 workflow.onComplete {
@@ -345,4 +618,125 @@ workflow.onComplete {
     }
 
 
+}
+
+
+
+
+/*
+================================================================================
+=                               F U N C T I O N S                              =
+================================================================================
+*/
+
+def helpMessage() {
+  // Display help message
+  this.sarekMessage()
+  log.info "    Usage:"
+  log.info "       nextflow run ExomeSeqPipe --sample <file.tsv> [--tools TOOL[,TOOL]] --genome <Genome>"
+  log.info "    --sample <file.tsv>"
+  log.info "       Specify a TSV file containing paths to sample files."
+  log.info "    --test"
+  log.info "       Use a test sample."
+  log.info "    --noReports"
+  log.info "       Disable QC tools and MultiQC to generate a HTML report"
+  log.info "    --tools"
+  log.info "       Option to configure which tools to use in the workflow."
+  log.info "         Different tools to be separated by commas."
+  log.info "       Possible values are:"
+  log.info "         mutect2 (use MuTect2 for VC)"
+  log.info "         freebayes (use FreeBayes for VC)"
+  log.info "         strelka (use Strelka for VC)"
+  log.info "         haplotypecaller (use HaplotypeCaller for normal bams VC)"
+  log.info "         manta (use Manta for SV)"
+  log.info "         ascat (use Ascat for CNV)"
+  log.info "    --genome <Genome>"
+  log.info "       Use a specific genome version."
+  log.info "       Possible values are:"
+  log.info "         GRCh37"
+  log.info "         GRCh38 (Default)"
+  log.info "         smallGRCh37 (Use a small reference (Tests only))"
+  log.info "    --onlyQC"
+  log.info "       Run only QC tools and gather reports"
+  log.info "    --help"
+  log.info "       you're reading it"
+  log.info "    --verbose"
+  log.info "       Adds more verbosity to workflow"
+}
+
+def minimalInformationMessage() {
+  // Minimal information message
+  log.info "Command Line: " + workflow.commandLine
+  log.info "Profile     : " + workflow.profile
+  log.info "Project Dir : " + workflow.projectDir
+  log.info "Launch Dir  : " + workflow.launchDir
+  log.info "Work Dir    : " + workflow.workDir
+  log.info "Out Dir     : " + params.outDir
+  log.info "TSV file    : " + tsvFile
+  log.info "Genome      : " + params.genome
+  log.info "Genome_base : " + params.genome_base
+  log.info "Target BED  : " + params.targetBED
+  log.info "Tools       : " + tools.join(', ')
+  log.info "Containers"
+  if (params.repository != "") log.info "  Repository   : " + params.repository
+  if (params.containerPath != "") log.info "  ContainerPath: " + params.containerPath
+  log.info "  Tag          : " + params.tag
+  log.info "Reference files used:"
+  log.info "  acLoci      :\n\t" + referenceMap.acLoci
+  log.info "  dbsnp       :\n\t" + referenceMap.dbsnp
+  log.info "\t" + referenceMap.dbsnpIndex
+  log.info "  genome      :\n\t" + referenceMap.genomeFile
+  log.info "\t" + referenceMap.genomeDict
+  log.info "\t" + referenceMap.genomeIndex
+  log.info "  intervals   :\n\t" + referenceMap.intervals
+}
+
+def exomeSeqMessage() {
+  // Display Sarek message
+    log.info ''
+    log.info '-------------------------------------------------------------'
+    log.info 'SYSUCC Exome seq data processing PIPELINE v!{version}'
+    log.info '-------------------------------------------------------------'
+    log.info ''
+    log.info 'Usage: '
+    log.info 'Nextflow run ExomeseqPipe.nf '
+}
+
+def startMessage() {
+  // Display start message
+  LikeletUtils.sysucc_ascii()
+  this.exomeSeqMessage()
+  this.minimalInformationMessage()
+}
+
+def checkParamReturnFile(item) {
+  params."${item}" = params.genomes[params.genome]."${item}"
+  return file(params."${item}")
+}
+//adjusted  from Saret 
+def defineReferenceMap() {
+  return [
+    'dbsnp'            : checkParamReturnFile("dbsnp"),
+    'dbsnpIndex'       : checkParamReturnFile("dbsnpIndex"),
+    // genome reference dictionary
+    'genomeDict'       : checkParamReturnFile("genomeDict"),
+    // FASTA genome reference
+    'genomeFile'       : checkParamReturnFile("genomeFile"),
+    // genome .fai file
+    'genomeIndex'      : checkParamReturnFile("genomeIndex"),
+    // BWA index files
+    'bwaIndex'         : checkParamReturnFile("bwaIndex"),
+    // intervals file for spread-and-gather processes
+    'intervals'        : checkParamReturnFile("intervals"),
+    // VCFs with known indels (such as 1000 Genomes, Mill’s gold standard)
+    'knownIndels'      : checkParamReturnFile("knownIndels"),
+    'knownIndelsIndex' : checkParamReturnFile("knownIndelsIndex"),
+  ]
+}
+// spread bam and intervals
+def generateIntervalsForVC(bams, intervals) {
+  def (bamsNew, bamsForVC) = bams.into(2)
+  def (intervalsNew, vcIntervals) = intervals.into(2)
+  def bamsForVCNew = bamsForVC.combine(vcIntervals)
+  return [bamsForVCNew, bamsNew, intervalsNew]
 }
