@@ -1,18 +1,19 @@
+#!/usr/bin/env groovy
 import static nextflow.Nextflow.file
 import nextflow.Channel
 
 class LikeletUtils {
 
 // adjust command colors
-static final ANSI_RESET = "\u001B[0m";
-static final ANSI_BLACK = "\u001B[30m";
-static final ANSI_RED = "\u001B[31m";
-static final ANSI_GREEN = "\u001B[32m";
-static final ANSI_YELLOW = "\u001B[33m";
-static final ANSI_BLUE = "\u001B[34m";
-static final ANSI_PURPLE = "\u001B[35m";
-static final ANSI_CYAN = "\u001B[36m";
-static final ANSI_WHITE = "\u001B[37m";
+static String ANSI_RESET = "\u001B[0m"
+static String ANSI_BLACK = "\u001B[30m"
+static String ANSI_RED = "\u001B[31m"
+static String ANSI_GREEN = "\u001B[32m"
+static String ANSI_YELLOW = "\u001B[33m"
+static String ANSI_BLUE = "\u001B[34m"
+static String ANSI_PURPLE = "\u001B[35m"
+static String ANSI_CYAN = "\u001B[36m"
+static String ANSI_WHITE = "\u001B[37m"
 
 static def print_red = {  str -> LikeletUtils.ANSI_RED + str + LikeletUtils.ANSI_RESET }
 static def print_black = {  str -> LikeletUtils.ANSI_BLACK + str + LikeletUtils.ANSI_RESET }
@@ -57,7 +58,7 @@ static def extractFastq(tsvFile) {
     def idSample   = row[3]
     def fastqFile1 = LikeletUtils.returnFile(row[4])
     def fastqFile2 = LikeletUtils.returnFile(row[5])
-    [idPatient, gender, status, idSample, idRun, fastqFile1, fastqFile2]
+    [idPatient, gender, status, idSample, fastqFile1, fastqFile2]
   }
 }
 
@@ -65,19 +66,21 @@ static def extractFastq(tsvFile) {
 
 
 static def sysucc_ascii() {
-    LikeletUtils.print_yellow("
- ▄▄▄▄▄▄▄▄▄▄▄  ▄         ▄  ▄▄▄▄▄▄▄▄▄▄▄  ▄         ▄  ▄▄▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄▄▄ 
-▐░░░░░░░░░░░▌▐░▌       ▐░▌▐░░░░░░░░░░░▌▐░▌       ▐░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌
-▐░█▀▀▀▀▀▀▀▀▀ ▐░▌       ▐░▌▐░█▀▀▀▀▀▀▀▀▀ ▐░▌       ▐░▌▐░█▀▀▀▀▀▀▀▀▀ ▐░█▀▀▀▀▀▀▀▀▀ 
-▐░▌          ▐░▌       ▐░▌▐░▌          ▐░▌       ▐░▌▐░▌          ▐░▌          
-▐░█▄▄▄▄▄▄▄▄▄ ▐░█▄▄▄▄▄▄▄█░▌▐░█▄▄▄▄▄▄▄▄▄ ▐░▌       ▐░▌▐░▌          ▐░▌          
-▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░▌       ▐░▌▐░▌          ▐░▌          
- ▀▀▀▀▀▀▀▀▀█░▌ ▀▀▀▀█░█▀▀▀▀  ▀▀▀▀▀▀▀▀▀█░▌▐░▌       ▐░▌▐░▌          ▐░▌          
-          ▐░▌     ▐░▌               ▐░▌▐░▌       ▐░▌▐░▌          ▐░▌          
- ▄▄▄▄▄▄▄▄▄█░▌     ▐░▌      ▄▄▄▄▄▄▄▄▄█░▌▐░█▄▄▄▄▄▄▄█░▌▐░█▄▄▄▄▄▄▄▄▄ ▐░█▄▄▄▄▄▄▄▄▄ 
-▐░░░░░░░░░░░▌     ▐░▌     ▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌
- ▀▀▀▀▀▀▀▀▀▀▀       ▀       ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀▀ 
- ")
+
+
+    
+  print LikeletUtils.print_yellow(" ▄▄▄▄▄▄▄▄▄▄▄  ▄         ▄  ▄▄▄▄▄▄▄▄▄▄▄  ▄         ▄  ▄▄▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄▄▄ \n")
+  print LikeletUtils.print_yellow("▐░░░░░░░░░░░▌▐░▌       ▐░▌▐░░░░░░░░░░░▌▐░▌       ▐░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌\n")
+  print LikeletUtils.print_yellow("▐░█▀▀▀▀▀▀▀▀▀ ▐░▌       ▐░▌▐░█▀▀▀▀▀▀▀▀▀ ▐░▌       ▐░▌▐░█▀▀▀▀▀▀▀▀▀ ▐░█▀▀▀▀▀▀▀▀▀ \n")
+  print LikeletUtils.print_yellow("▐░▌          ▐░▌       ▐░▌▐░▌          ▐░▌       ▐░▌▐░▌          ▐░▌          \n")
+  print LikeletUtils.print_yellow("▐░█▄▄▄▄▄▄▄▄▄ ▐░█▄▄▄▄▄▄▄█░▌▐░█▄▄▄▄▄▄▄▄▄ ▐░▌       ▐░▌▐░▌          ▐░▌          \n")
+  print LikeletUtils.print_yellow("▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░▌       ▐░▌▐░▌          ▐░▌          \n")
+  print LikeletUtils.print_yellow(" ▀▀▀▀▀▀▀▀▀█░▌ ▀▀▀▀█░█▀▀▀▀  ▀▀▀▀▀▀▀▀▀█░▌▐░▌       ▐░▌▐░▌          ▐░▌          \n")
+  print LikeletUtils.print_yellow("          ▐░▌     ▐░▌               ▐░▌▐░▌       ▐░▌▐░▌          ▐░▌          \n")
+  print LikeletUtils.print_yellow(" ▄▄▄▄▄▄▄▄▄█░▌     ▐░▌      ▄▄▄▄▄▄▄▄▄█░▌▐░█▄▄▄▄▄▄▄█░▌▐░█▄▄▄▄▄▄▄▄▄ ▐░█▄▄▄▄▄▄▄▄▄ \n")
+  print LikeletUtils.print_yellow("▐░░░░░░░░░░░▌     ▐░▌     ▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌\n")
+  print LikeletUtils.print_yellow(" ▀▀▀▀▀▀▀▀▀▀▀       ▀       ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀▀  ▀▀▀▀▀▀▀▀▀▀▀ \n")
+ 
   }
 
 }

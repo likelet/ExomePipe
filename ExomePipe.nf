@@ -10,23 +10,17 @@
 // - bcftools
 
 
-// Pipeline version
-version = '0.0.1'
 
 //user options
 if (params.help) {
-    log.info ''
-    log.info '-------------------------------------------------------------'
-    log.info 'NEXTFLOW Exome seq data processing PIPELINE v!{version}'
-    log.info '-------------------------------------------------------------'
-    log.info ''
-    log.info 'Usage: '
-    log.info 'Nextflow ExomeseqPipe.nf '
+    this.helpMessage()
 
     exit 1
 }
 
-
+//
+outdir=params.outDir
+inputdir=params.inputdir
 
 // setting annotation file path 
 referenceMap = defineReferenceMap()
@@ -39,7 +33,7 @@ fastqFiles = Channel.empty()
 bamFiles = Channel.empty()
 if (tsvPath) {
   tsvFile = file(tsvPath)
-  fastqFiles = extractFastq(tsvFile)
+  fastqFiles = LikeletUtils.extractFastq(tsvFile)
 } else{
     log.info LikeletUtils.print_red("no sample table specified, plz specified a sample table ") 
     exit 1
@@ -55,22 +49,24 @@ process bwa_aligment{
         tag { file_tag }
 
         input:
-        set idPatient, status, idSample, file(fastqFile1), file(fastqFile2) from fastqFiles
-        file  bwa_id from bwa_index.collect()
+        set idPatient, gender, status, idSample, file(fastqFile1), file(fastqFile2) from fastqFiles
+         set file(genomeFile), file(bwaIndex) from Channel.value([
+            referenceMap.genomeFile,
+            referenceMap.bwaIndex
+            ])
 
 
         output:
-        set idPatient, status, idSample, file("${idSample}.bam") into (mappedBam, mappedBamForQC)
+        set idPatient, status, idSample, file("${idSample}.bam") into mappedBam, mappedBamForQC
         
         script:
-        file_tag_new=samplename
+        file_tag_new=idSample
         file_tag=file_tag_new
-        bwa_threads = 10
 
         readGroup = "@RG\\tID:niID\\tPU:noPU\\tSM:${idSample}\\tLB:${idSample}\\tPL:illumina"
 
         """
-        bwa mem -t ${task.cpus} genome.fa -M -R \"${readGroup}\" ${fastqFile1} ${fastqFile2} | \
+        bwa mem -t ${task.cpus} ${genomeFile} -M -R \"${readGroup}\" ${fastqFile1} ${fastqFile2} | \
         samtools sort --threads ${task.cpus} -m 2G - > ${idSample}.bam
         """
         }
@@ -119,7 +115,7 @@ process MarkDuplicates {
             set idPatient, status, idSample, file("${idSample}.bam") from mappedBam
 
         output:
-            set idPatient, file("${idSample}_${status}.md.bam"), file("${idSample}_${status}.md.bai") into duplicateMarkedBams
+            set idPatient, status, idSample, file("${idSample}_${status}.md.bam"), file("${idSample}_${status}.md.bai") into duplicateMarkedBams,mdBamToJoin
             set idPatient, status, idSample, val("${idSample}_${status}.md.bam"), val("${idSample}_${status}.md.bai") into markDuplicatesTSV
             file ("${idSample}.bam.metrics") into markDuplicatesReport
 
@@ -177,10 +173,13 @@ process CreateRecalibrationTable {
         """
 }
 
+recalibrationTable = mdBamToJoin.join(recalibrationTable, by:[0,1,2])
+
+
 process RecalibrateBam {
         tag {idPatient + "-" + idSample}
 
-        publishDir publishDir+"/recal_bam", mode: 'link'
+        publishDir outdir+"/recal_bam", mode: 'link'
 
 
         input:
@@ -221,7 +220,8 @@ Step 5  Mutect call somatic variations
 // separate recalibrateBams by status
 bamsNormal = Channel.create()
 bamsTumor = Channel.create()
-recalibratedBam.choice(bamsTumor, bamsNormal) {it[1] == 0 ? 1 : 0}
+recalibratedBam = recalibratedBam.first()
+recalibratedBam.choice(bamsNormal, bamsTumor) {it[1] == 0 ? 1 : 0}
 //check files
 bamsNormal = bamsNormal.ifEmpty{exit 1, "No normal sample defined, check TSV file: ${tsvFile}"}
 bamsTumor = bamsTumor.ifEmpty{exit 1, "No tumor sample defined, check TSV file: ${tsvFile}"}
@@ -390,7 +390,7 @@ process filtered_Mutect_VCFs{
 Step 7  Annotated filter variants by Annovar 
 */
 
-process filtered_Mutect_VCFs{
+process Annotate_Mutect_VCF{
         tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
 
         publishDir path: {params.outdir +"/Annotaed_Filtered_VAFs"}, mode: "copy"
@@ -632,37 +632,10 @@ workflow.onComplete {
 
 def helpMessage() {
   // Display help message
-  this.sarekMessage()
+  this.exomeSeqMessage()
   log.info "    Usage:"
-  log.info "       nextflow run ExomeSeqPipe --sample <file.tsv> [--tools TOOL[,TOOL]] --genome <Genome>"
+  log.info "       nextflow run ExomeSeqPipe --sample <file.tsv> "
   log.info "    --sample <file.tsv>"
-  log.info "       Specify a TSV file containing paths to sample files."
-  log.info "    --test"
-  log.info "       Use a test sample."
-  log.info "    --noReports"
-  log.info "       Disable QC tools and MultiQC to generate a HTML report"
-  log.info "    --tools"
-  log.info "       Option to configure which tools to use in the workflow."
-  log.info "         Different tools to be separated by commas."
-  log.info "       Possible values are:"
-  log.info "         mutect2 (use MuTect2 for VC)"
-  log.info "         freebayes (use FreeBayes for VC)"
-  log.info "         strelka (use Strelka for VC)"
-  log.info "         haplotypecaller (use HaplotypeCaller for normal bams VC)"
-  log.info "         manta (use Manta for SV)"
-  log.info "         ascat (use Ascat for CNV)"
-  log.info "    --genome <Genome>"
-  log.info "       Use a specific genome version."
-  log.info "       Possible values are:"
-  log.info "         GRCh37"
-  log.info "         GRCh38 (Default)"
-  log.info "         smallGRCh37 (Use a small reference (Tests only))"
-  log.info "    --onlyQC"
-  log.info "       Run only QC tools and gather reports"
-  log.info "    --help"
-  log.info "       you're reading it"
-  log.info "    --verbose"
-  log.info "       Adds more verbosity to workflow"
 }
 
 def minimalInformationMessage() {
@@ -677,13 +650,11 @@ def minimalInformationMessage() {
   log.info "Genome      : " + params.genome
   log.info "Genome_base : " + params.genome_base
   log.info "Target BED  : " + params.targetBED
-  log.info "Tools       : " + tools.join(', ')
   log.info "Containers"
   if (params.repository != "") log.info "  Repository   : " + params.repository
   if (params.containerPath != "") log.info "  ContainerPath: " + params.containerPath
   log.info "  Tag          : " + params.tag
   log.info "Reference files used:"
-  log.info "  acLoci      :\n\t" + referenceMap.acLoci
   log.info "  dbsnp       :\n\t" + referenceMap.dbsnp
   log.info "\t" + referenceMap.dbsnpIndex
   log.info "  genome      :\n\t" + referenceMap.genomeFile
@@ -694,9 +665,10 @@ def minimalInformationMessage() {
 
 def exomeSeqMessage() {
   // Display Sarek message
+    LikeletUtils.sysucc_ascii()
     log.info ''
     log.info '-------------------------------------------------------------'
-    log.info 'SYSUCC Exome seq data processing PIPELINE v!{version}'
+    log.info 'SYSUCC Exome seq data processing PIPELINE '
     log.info '-------------------------------------------------------------'
     log.info ''
     log.info 'Usage: '
@@ -711,7 +683,6 @@ def startMessage() {
 }
 
 def checkParamReturnFile(item) {
-  params."${item}" = params.genomes[params.genome]."${item}"
   return file(params."${item}")
 }
 //adjusted  from Saret 
