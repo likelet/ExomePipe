@@ -222,16 +222,13 @@ bamsNormal = Channel.create()
 bamsTumor = Channel.create()
 recalibratedBam = recalibratedBam.first()
 recalibratedBam.choice(bamsNormal, bamsTumor) {it[1] == 0 ? 1 : 0}
-//check files
-bamsNormal = bamsNormal.ifEmpty{exit 1, "No normal sample defined, check TSV file: ${tsvFile}"}
-bamsTumor = bamsTumor.ifEmpty{exit 1, "No tumor sample defined, check TSV file: ${tsvFile}"}
 // remove status
 bamsNormal = bamsNormal.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
 bamsTumor = bamsTumor.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
 
 
 
-//split input bed into multiple to help accelerate mutect2 calling 
+//split input bed into multiple pieces to help accelerating mutect2 calling 
 process CreateIntervalBeds {
     tag {intervals.fileName}
 
@@ -242,8 +239,7 @@ process CreateIntervalBeds {
         file '*.bed' into bedIntervals mode flatten
 
     script:
-    // If the interval file is BED format, the fifth column is interpreted to
-    // contain runtime estimates, which is then used to combine short-running jobs
+    // the first three column of bed should be chr start and end  , whose coordinate should be 0-based also 
         """
         awk -vFS="[:-]" '{
         name = sprintf("%s_%d-%d", \$1, \$2, \$3);
@@ -405,7 +401,7 @@ process Annotate_Mutect_VCF{
 
         output:
                 // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("*.anno.txt") into annovarTXT
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("*.anno.txt") into annovarTXT,annovarTXTforSamplefile
             
         script:
         outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
@@ -426,7 +422,7 @@ process Annotate_Mutect_VCF{
 Step 8  Collapse and convert annoted file into MAF file for futher analysis 
 */
 
-annovarTXT.map { variantCaller,idPatient, idSampleNormal, idSampleTumor, vcfFiltered ->
+annovarTXTforSamplefile.map { variantCaller,idPatient, idSampleNormal, idSampleTumor, vcfFiltered ->
   "${vcfFiltered}\t${idSampleTumor}\n"
 }.collectFile(name: 'filelist.txt').set { annoFile_sample }
 
@@ -455,7 +451,7 @@ process Convert2MAF{
 // Copy number analysis
 // Facet.R analysis for purity analysis
 // Freec for WES
-
+/*
 process runADTex{
     tag {file_tag}
 
@@ -587,7 +583,7 @@ process runSequenza_R{
 
         }
 
-
+*/
 
 
 
@@ -632,7 +628,6 @@ workflow.onComplete {
 
 def helpMessage() {
   // Display help message
-  this.exomeSeqMessage()
   log.info "    Usage:"
   log.info "       nextflow run ExomeSeqPipe --sample <file.tsv> "
   log.info "    --sample <file.tsv>"
@@ -640,36 +635,25 @@ def helpMessage() {
 
 def minimalInformationMessage() {
   // Minimal information message
-  log.info "Command Line: " + workflow.commandLine
-  log.info "Profile     : " + workflow.profile
-  log.info "Project Dir : " + workflow.projectDir
-  log.info "Launch Dir  : " + workflow.launchDir
-  log.info "Work Dir    : " + workflow.workDir
-  log.info "Out Dir     : " + params.outDir
-  log.info "TSV file    : " + tsvFile
-  log.info "Genome      : " + params.genome
-  log.info "Genome_base : " + params.genome_base
-  log.info "Target BED  : " + params.targetBED
-  log.info "Containers"
-  if (params.repository != "") log.info "  Repository   : " + params.repository
-  if (params.containerPath != "") log.info "  ContainerPath: " + params.containerPath
-  log.info "  Tag          : " + params.tag
-  log.info "Reference files used:"
-  log.info "  dbsnp       :\n\t" + referenceMap.dbsnp
-  log.info "\t" + referenceMap.dbsnpIndex
-  log.info "  genome      :\n\t" + referenceMap.genomeFile
-  log.info "\t" + referenceMap.genomeDict
-  log.info "\t" + referenceMap.genomeIndex
-  log.info "  intervals   :\n\t" + referenceMap.intervals
+  print_parameter("Command Line: ", workflow.commandLine)
+  print_parameter("Profile     : ", workflow.profile)
+  print_parameter("Project Dir : ", workflow.projectDir)
+  print_parameter("Launch Dir  : ", workflow.launchDir)
+  print_parameter("Work Dir    : ", workflow.workDir)
+  print_parameter("Out Dir     : ", params.outdir)
+  print_parameter("TSV file    : ", tsvFile)
+  print_parameter("dbsnp       : ",referenceMap.dbsnp)
+  print_parameter("genome      : ",referenceMap.genomeFile)
+  print_parameter("intervals   : ",referenceMap.intervals)
 }
 
 def exomeSeqMessage() {
   // Display Sarek message
     LikeletUtils.sysucc_ascii()
     log.info ''
-    log.info '-------------------------------------------------------------'
-    log.info 'SYSUCC Exome seq data processing PIPELINE '
-    log.info '-------------------------------------------------------------'
+    print LikeletUtils.print_yellow('-------------------------------------------------------------')+"\n"
+    print LikeletUtils.print_yellow('=========SYSUCC Exome seq data processing PIPELINE ==========')+"\n"
+    print LikeletUtils.print_yellow('-------------------------------------------------------------')+"\n"
     log.info ''
     log.info 'Usage: '
     log.info 'Nextflow run ExomeseqPipe.nf '
@@ -677,7 +661,6 @@ def exomeSeqMessage() {
 
 def startMessage() {
   // Display start message
-  LikeletUtils.sysucc_ascii()
   this.exomeSeqMessage()
   this.minimalInformationMessage()
 }
@@ -707,8 +690,11 @@ def defineReferenceMap() {
 }
 // spread bam and intervals
 def generateIntervalsForVC(bams, intervals) {
-  def (bamsNew, bamsForVC) = bams.into(2)
-  def (intervalsNew, vcIntervals) = intervals.into(2)
-  def bamsForVCNew = bamsForVC.combine(vcIntervals)
-  return [bamsForVCNew, bamsNew, intervalsNew]
+    def (bamsNew, bamsForVC) = bams.into(2)
+    def (intervalsNew, vcIntervals) = intervals.into(2)
+    def bamsForVCNew = bamsForVC.combine(vcIntervals)
+    return [bamsForVCNew, bamsNew, intervalsNew]
+}
+def print_parameter(content, parameter){
+    print LikeletUtils.print_cyan(content)+LikeletUtils.print_green(parameter)+"\n"
 }
