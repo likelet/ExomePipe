@@ -1,0 +1,33 @@
+name: sysucc-exomeseq-1.0dev
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - fastp=0.19.5
+  - multiqc=1.6
+  - numpy=1.15.2
+  - bwa=0.7.17
+  - nextflow=0.32.0
+  - samtools=1.9
+  - gatk4=4.0.12.0
+  - r-ggplot2=3.1.0
+  - r-pheatmap=1.0.10
+  - bioconductor-edger=3.22.5
+  - bioconductor-deseq2=1.20.0
+  - bioconductor-limma=3.36.5
+  - bioconductor-chipseeker=1.16.1
+  - bioconductor-fgsea=1.6.0
+  - bioconductor-bsgenome.hsapiens.ucsc.hg38=1.4.1
+  - bioconductor-clusterprofiler=3.8.1
+  - bioconductor-reactomepa=1.24.0
+  - bioconductor-pathview=1.20.0
+  - r-dplyr=0.7.6
+  - r-readr=1.1.1
+  - r-rmarkdown=1.10
+  - r-ggsci=2.9
+  - r-circlize=0.4.5
+  - r-rcolorbrewer=1.1_2
+  - r-venndiagram=1.6.20
+  - tophat=2.1.1
+  - bedtools=2.27.1

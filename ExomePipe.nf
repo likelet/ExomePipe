@@ -19,7 +19,7 @@ if (params.help) {
 }
 
 //
-outdir=params.outDir
+outdir=params.outdir
 inputdir=params.inputdir
 
 // setting annotation file path 
@@ -164,7 +164,6 @@ process CreateRecalibrationTable {
         BaseRecalibrator \
         --input ${bam} \
         --output ${idSample}.recal.table \
-        --tmp-dir /tmp \
         -R ${genomeFile} \
         -L ${intervals} \
         --known-sites ${dbsnp} \
@@ -179,7 +178,7 @@ recalibrationTable = mdBamToJoin.join(recalibrationTable, by:[0,1,2])
 process RecalibrateBam {
         tag {idPatient + "-" + idSample}
 
-        publishDir outdir+"/recal_bam", mode: 'link'
+        publishDir path:{params.outdir + "/Result/recal_bam"}, mode: 'link'
 
 
         input:
@@ -220,15 +219,24 @@ Step 5  Mutect call somatic variations
 // separate recalibrateBams by status
 bamsNormal = Channel.create()
 bamsTumor = Channel.create()
-recalibratedBam = recalibratedBam.first()
+
 recalibratedBam.choice(bamsNormal, bamsTumor) {it[1] == 0 ? 1 : 0}
 // remove status
 bamsNormal = bamsNormal.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
 bamsTumor = bamsTumor.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
 
 
+bamsAll = bamsNormal.combine(bamsTumor)
+    // Since idPatientNormal and idPatientTumor are the same
+    // It's removed from bamsAll Channel (same for genderNormal)
+    // /!\ It is assumed that every sample are from the same patient
+bamsAll = bamsAll.map {
+    idPatientNormal, idSampleNormal, bamNormal, baiNormal, idPatientTumor, idSampleTumor, bamTumor, baiTumor ->
+    [idPatientNormal, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
+}
 
-//split input bed into multiple pieces to help accelerating mutect2 calling 
+
+//split input bed into multiple pieces to    help accelerating mutect2 calling 
 process CreateIntervalBeds {
     tag {intervals.fileName}
 
@@ -247,7 +255,7 @@ process CreateIntervalBeds {
         }' ${intervals}
         """
 }
-
+/*
 // process interval files 
     bedIntervals = bedIntervals
     .map { intervalFile ->
@@ -279,15 +287,17 @@ process CreateIntervalBeds {
     [idPatientNormal, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
     }
     // combine interval and bamsALL
-    bamsTumorNormalIntervals = bamsAll.spread(bedIntervals)
+    (bamsTumorNormalIntervals,bamsTumorNormalIntervalsforshow) = bamsAll.spread(bedIntervals).into(2)
+    bamsTumorNormalIntervalsforshow.print()
 
-
+*/
 // Mutect 
 process RunMutect2 {
-        tag {idSampleTumor + "_vs_" + idSampleNormal + "-" + intervalBed.baseName}
+        tag {idSampleTumor + "_vs_" + idSampleNormal}
 
         input:
-            set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor), file(intervalBed) from bamsTumorNormalIntervals
+            set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from bamsAll
+            file(intervals) from Channel.value(referenceMap.intervals)
             set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
             referenceMap.genomeFile,
             referenceMap.genomeIndex,
@@ -297,7 +307,7 @@ process RunMutect2 {
             ])
 
         output:
-            set val("mutect2"), idPatient, idSampleNormal, idSampleTumor, file("${intervalBed.baseName}_${idSampleTumor}_vs_${idSampleNormal}.vcf") into mutect2Output
+            set val("mutect2"), idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}_vs_${idSampleNormal}.vcf") into mutect2Output
         
         script:
         """
@@ -306,13 +316,14 @@ process RunMutect2 {
                 -R ${genomeFile}\
                 -I ${bamTumor}  -tumor ${idSampleTumor} \
                 -I ${bamNormal} -normal ${idSampleNormal} \
-                -L ${intervalBed} \
-                -O ${intervalBed.baseName}_${idSampleTumor}_vs_${idSampleNormal}.vcf
+                -L ${intervals} \
+                -O ${idSampleTumor}_vs_${idSampleNormal}.vcf
         """
 }
-mutect2Output = mutect2Output.groupTuple(by:[0,1,2,3])
+
 
 // merge VCF from split vcf
+/*
 process ConcatVCF {
         tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
 
@@ -337,7 +348,7 @@ process ConcatVCF {
             concatenateVCFs.sh ${concatOptions}
         """
 }
-
+*/
 /*
 Step 6  Filter Mutect output 
 */
@@ -345,10 +356,9 @@ Step 6  Filter Mutect output
 process filtered_Mutect_VCFs{
         tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
 
-        publishDir path: {params.outdir +"/Mutect2_filtered_VCF"}, mode: "copy"
-
+        publishDir path: {params.outdir +"/Result/Mutect2_filtered_VCF"}, mode: "copy"
         input:
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcf), file(tbi) from vcfConcatenated
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcf) from mutect2Output
             set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
                 referenceMap.genomeFile,
                 referenceMap.genomeIndex,
@@ -358,7 +368,7 @@ process filtered_Mutect_VCFs{
         output:
                 // we have this funny *_* pattern to avoid copying the raw calls to publishdir
             set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outputFile}") into vcfHardFiltered
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${vcf}.somatic.filter_mark.vcf.gz") into vcfMarkedFiltered
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}.somatic.filter_mark.vcf.gz") into vcfMarkedFiltered
 
         script:
         outputFile = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}.filtered.vcf"
@@ -368,14 +378,14 @@ process filtered_Mutect_VCFs{
             gatk --java-options "-Xmx${task.memory.toGiga()}g" \
                 FilterMutectCalls \
                 -V ${vcf} \
-                -O ${vcf}.somatic.filter_mark.vcf.gz
+                -O ${idSampleTumor}.somatic.filter_mark.vcf.gz
 
             # hard filter 
 
             gatk --java-options "-Xmx${task.memory.toGiga()}g" \
             SelectVariants \
             -R ${genomeFile} \
-            -V ${vcf}.somatic.filter_mark.vcf.gz \
+            -V ${idSampleTumor}.somatic.filter_mark.vcf.gz \
             -select "vc.isNotFiltered()" \
             -O ${outputFile}
 
