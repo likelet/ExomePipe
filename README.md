@@ -2,11 +2,13 @@
 ## dependencies
    * fastp
    * bwa 
-   * gatk
+   * picard/samtools 
+   * gatk4
    * mutect2
-   * strelka2
-   * sequenza
-   * tabix
+   * annovar and annovar DB
+   * MAFtools 
+   * some in-house script 
+
    
    
 # Input file 

@@ -399,7 +399,7 @@ Step 7  Annotated filter variants by Annovar
 process Annotate_Mutect_VCF{
         tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
 
-        publishDir path: {params.outdir +"/Annotaed_Filtered_VAFs"}, mode: "copy"
+        publishDir path: {params.outdir +"/Result/Annotaed_Filtered_VAFs"}, mode: "copy"
 
         input:
             set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcfFiltered) from vcfHardFiltered
@@ -411,16 +411,16 @@ process Annotate_Mutect_VCF{
 
         output:
                 // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("*.anno.txt") into annovarTXT,annovarTXTforSamplefile
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno*multianno.txt") into annovarTXT,annovarTXTforSamplefile
             
         script:
         outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
 
         """
-            table_annovar.pl example/ex2.vcf humandb/ -buildver ${params.annovarDB} \
+            table_annovar.pl ${vcfFiltered} ${params.annovarDBpath} -buildver ${params.annovarDB} \
                     -out ${outName}.somatic.anno -remove \
                     -otherinfo \
-                    -protocol refGene,cosmic70,avsnp147,ALL.sites.2015_08_edit,EAS.sites.2015_08_edit,esp6500siv2_all,exac03,ljb26_all,clinvar \
+                    -protocol refGene,cosmic70,avsnp147,ALL.sites.2015_08,EAS.sites.2015_08,esp6500siv2_all,exac03,ljb26_all,clinvar_20161128 \
                     -operation g,f,f,f,f,f,f,f,f \
                     -nastring . \
                     -vcfinput
@@ -434,7 +434,7 @@ Step 8  Collapse and convert annoted file into MAF file for futher analysis
 
 annovarTXTforSamplefile.map { variantCaller,idPatient, idSampleNormal, idSampleTumor, vcfFiltered ->
   "${vcfFiltered}\t${idSampleTumor}\n"
-}.collectFile(name: 'filelist.txt').set { annoFile_sample }
+}.collectFile(name: 'filelist.txt').set { annoFile_sample}
 
 process Convert2MAF{
         tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
@@ -451,9 +451,29 @@ process Convert2MAF{
         outName = "${variantCaller}_Merged"
 
         """
-            perl ${baseDir}/bin/Mutect_Annovar_to_MAF.pl > ${outName}.MAF
+            perl ${baseDir}/bin/Mutect_Annovar_to_MAF.pl filelist.txt > ${outName}.MAF
 
         """
+}
+
+/*
+Step 9 MAF summary analysis with MAFtools 
+*/
+if(params.MAF) Mutect_mergedMAF=file(params.MAF)
+
+process MAFsummaryAnalysis{
+    tag null
+    publishDir path: {params.outdir +"/MAFtools_summary"}, mode: "copy"
+
+    input: 
+        set variantCaller, file(MAFsfile) from Mutect_mergedMAF
+    output: 
+        file "*" into MAFtools_Output
+    script:
+    """
+        Rscript MAFanalysis.R ${MAFsfile}
+    """
+
 }
 
 
@@ -601,7 +621,7 @@ process runSequenza_R{
 //pipeline log
 workflow.onComplete {
 
-    log.info "SYSUCC bioinformatics center Exome analysis Pipeline Complete"
+    log.info LikeletUtils.print_green("SYSUCC bioinformatics center Exome analysis Pipeline Complete !")
 
     //email information
     if(params.mail){
@@ -625,6 +645,9 @@ workflow.onComplete {
     }
 
 
+}
+workflow.onError {
+    println LikeletUtils.print_yellow("Oops... Pipeline execution stopped with the following message: ")+LikeletUtils.print_red(workflow.errorMessage)
 }
 
 
