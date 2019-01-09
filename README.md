@@ -8,6 +8,7 @@
    * annovar and annovar DB
    * MAFtools 
    * some in-house script 
+   * msisensor 
 
    * Dependencies for FREEC
         * Control-freeC

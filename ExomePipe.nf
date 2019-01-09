@@ -222,17 +222,23 @@ bamsTumor = Channel.create()
 
 recalibratedBam.choice(bamsNormal, bamsTumor) {it[1] == 0 ? 1 : 0}
 // remove status
-bamsNormal = bamsNormal.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
+
+bamsNormal = bamsNormal.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }.view()
 bamsTumor = bamsTumor.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
 
-bamsAll = bamsNormal.combine(bamsTumor)
+bamsAll = bamsNormal.combine(bamsTumor, by : 0 )
     // Since idPatientNormal and idPatientTumor are the same
     // It's removed from bamsAll Channel (same for genderNormal)
     // /!\ It is assumed that every sample are from the same patient
-(bamsAll,bamforFreeC) = bamsAll.map {
-    idPatientNormal, idSampleNormal, bamNormal, baiNormal, idPatientTumor, idSampleTumor, bamTumor, baiTumor ->
-    [idPatientNormal, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
-}.into(2)
+
+(bamsAll,bamforFreeC,bamforFACET,BamforMSIsensor) = bamsAll.map {
+    idPatient, idSampleTumor, bamTumor, baiTumor, idSampleNormal, bamNormal, baiNormal ->
+    [idPatient, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
+}.view().into(4)
+
+//=======================================================================
+// start analysis for futher analysis 
+//=======================================================================
 
 
 
@@ -330,7 +336,7 @@ process Annotate_Mutect_VCF{
 
         output:
                 // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno*multianno.txt") into annovarTXT,annovarTXTforSamplefile
+            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno.*_multianno.txt") into annovarTXT,annovarTXTforSamplefile
             
         script:
         outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
@@ -352,25 +358,27 @@ Step 8  Collapse and convert annoted file into MAF file for futher analysis
 */
 
 annovarTXTforSamplefile.map { variantCaller,idPatient, idSampleNormal, idSampleTumor, vcfFiltered ->
-  "${vcfFiltered}\t${idSampleTumor}\n"
+    "${vcfFiltered}\t${idSampleTumor}\n"
 }.collectFile(name: 'filelist.txt').set { annoFile_sample}
 
+annovarTXT2=annovarTXT.map{variantCaller, idPatient, idSampleNormal, idSampleTumor, annotatedTxt ->
+    [annotatedTxt]
+}
+
 process Convert2MAF{
-        tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
+        tag "Mutect"
 
         publishDir path: {params.outdir +"/Result/Mutect2_merged_MAF"}, mode: "copy"
 
         input:
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(annotatedTxt) from annovarTXT.collect()
+            file annotatedTxt from annovarTXT2.collect()
             file mapFile from annoFile_sample
         output:
-            set variantCaller, file("${variantCaller}_Merged.MAF") into Mutect_mergedMAF
+            file "Mutect_Merged.MAF"  into Mutect_mergedMAF
+
         script:
-
-        outName = "${variantCaller}_Merged"
-
         """
-            perl ${baseDir}/bin/Mutect_Annovar_to_MAF.pl filelist.txt > ${outName}.MAF
+            perl ${baseDir}/bin/Mutect_Annovar_to_MAF.pl filelist.txt > Mutect_Merged.MAF
 
         """
 }
@@ -382,13 +390,18 @@ Step 9 MAF summary analysis with MAFtools
 if(params.MAF) Mutect_mergedMAF=file(params.MAF)
 
 process MAFsummaryAnalysis{
-    tag null
+    tag "Mutect"
+
     publishDir path: {params.outdir +"/Result/MAFtools_summary"}, mode: "copy"
 
     input: 
-        set variantCaller, file(MAFsfile) from Mutect_mergedMAF
+        file MAFsfile  from Mutect_mergedMAF
     output: 
         file "*" into MAFtools_Output
+
+    when:
+    params.runMAFsummary
+
     script:
     """
         Rscript ${baseDir}/bin/MAFanalysis.R ${MAFsfile}
@@ -417,7 +430,7 @@ if(params.runFreeC){
                         ])
 
                 output:
-                    set idPatient, idSampleNormal, file("${idSampleNormal}.pileup.gz"), dSampleTumor, file("${dSampleTumor}.pileup.gz") into pileupFileForConfig
+                    set idPatient, idSampleNormal, file("${idSampleNormal}.pileup.gz"), idSampleTumor, file("${idSampleTumor}.pileup.gz") into pileupFileForConfig
 
                 script:
                 
@@ -444,16 +457,16 @@ if(params.runFreeC){
 
                 output:
                     file "*"
-                    set idPatient, file("${dSampleTumor}.pileup.gz_ratio.txt") into cnvFileForfreeC
+                    set idPatient, file("${idPatient}.pileup.gz_ratio.txt") into cnvFileForfreeC
                 
                 script:
                 
-                '''
-                sh !{BaseDir}/bin/generate_Freec_Config_WEX.sh !{bamTumor} !{bamNormal} !{idPatient} !{chrLenFile} !{chrFile} !{snpfile} !{bedfile}
+                """
+                sh ${baseDir}/bin/generate_Freec_Config_WEX.sh ${pileTumor} ${pileNormal} ${idPatient} ${chrLenFile} ${chrFile} ${snpfile} ${bedfile}
 
-                freec -conf !{idPatient}_freec_config.txt > ${idPatient}_freec.log 
+                freec -conf ${idPatient}_freec_config.txt > ${idPatient}_freec.log 
 
-                '''
+                """
             }
 
             process FREEC_2_GISTIC_coversion{
@@ -463,9 +476,7 @@ if(params.runFreeC){
 
                 input: 
                     set idPatient, file(ratioFIle) from cnvFileForfreeC
-                    file chrLenFile from Channel.value([
-                                                                FreeCreferenceMap.chrLenFile
-                                                            ])
+                    file chrLenFile from Channel.value([FreeCreferenceMap.chrLenFile])
                 output:
                     set idPatient,file("${idPatient}.gistic.seg") into GISTICsegFile
                 
@@ -485,6 +496,57 @@ Step 11 Run analysis by FACET(optional)
 */
 if(params.runFACET){     
 }
+
+
+
+
+/*
+Step 12 MSI-sensor 
+*/
+
+
+if(params.runMSIsensor){
+
+            process scanMSIfromGenome{
+                tag "run once"
+                
+                storeDir params.storedir
+
+
+                input:
+                    file genomeFile from Channel.value{[referenceMap.genomeFile]}
+                output:
+                    file "microsatellites.list" into MicrosatellitesListFile 
+
+                script:
+
+                    """
+                    msisensor scan -d ${genomeFile}-o microsatellites.list
+                    """
+
+
+            }
+            process runMSIsensor{
+                tag {idPatient}
+
+                publishDir path: {params.outdir +"/Result/MSIsensor/"}, mode: "move"
+
+                input:
+                    set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforMSIsensor
+                    file MSIlistfile from MicrosatellitesListFile 
+                    file bedfile from Channel.value{[referenceMap.intervals]}
+
+                output:
+                    file "${idPatient}*"
+
+                script:
+                    """
+                    msisensor msi -d ${MSIlistfile}.list -n ${bamNormal} -t ${bamTumor} -e ${bedfile} -o ${idPatient}
+                    """ 
+            }
+}
+
+
 
 // Downstream analysis
 // Copy number analysis
@@ -737,7 +799,7 @@ def defineFREECref() {
     // snp file for calculating BAF
     'snpfile'               : checkParamReturnFile("freec_snpfile"),
     // bed 
-    'bedfile'               : checkParamReturnFile("genomeFile")
+    'bedfile'               : checkParamReturnFile("freec_bedfile")
   ]
 }
 

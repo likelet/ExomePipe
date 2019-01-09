@@ -19,7 +19,7 @@ die `pod2text $0` unless @ARGV == 1;
 use strict;
 use File::Basename;
 
-print "Hugo_Symbol\tChromosome\tStart_Position\tEnd_Position\tVariant_Classification\tVariant_Type\tReference_Allele\tTumor_Seq_Allele1\tTumor_Seq_Allele2\tRef_allele_depth\tAlt_allele_depth\tVAF\tCDS_Change\tProtein_Change\tTumor_Sample_Barcode\tcosmic70\tavsnp147\tALL.sites.2015_08_edit\tesp6500siv2_all\tExAC_ALL\n";
+print "Hugo_Symbol\tChromosome\tStart_Position\tEnd_Position\tVariant_Classification\tVariant_Type\tReference_Allele\tTumor_Seq_Allele1\tTumor_Seq_Allele2\tRef_allele_depth\tAlt_allele_depth\tVAF\tCDS_Change\tProtein_Change\tTumor_Sample_Barcode\tcosmic70\tavsnp147\tALL.sites.2015_08\tesp6500siv2_all\tExAC_ALL\n";
 
 open IN, shift or die $!;
 
@@ -92,10 +92,10 @@ while (<IN>){
 		$F[$index{"Chr"}] =~ s/chr//;
 		$F[$index{"cosmic70"}] = "." unless $F[$index{"cosmic70"}];
 		$F[$index{"avsnp147"}] = "." unless $F[$index{"avsnp147"}];
-		$F[$index{"ALL.sites.2015_08_edit"}] = "." unless $F[$index{"ALL.sites.2015_08_edit"}];
+		$F[$index{"ALL.sites.2015_08"}] = "." unless $F[$index{"ALL.sites.2015_08"}];
 		$F[$index{"esp6500siv2_all"}] = "." unless $F[$index{"esp6500siv2_all"}];
 		$F[$index{"ExAC_ALL"}] = "." unless $F[$index{"ExAC_ALL"}];
-		print join "\t", $F[$index{"Gene.refGene"}], $F[$index{"Chr"}], $start_pos, $end_pos, $F[$index{"ExonicFunc.refGene"}], $mut_type, $F[$index{"Ref"}], $mut_allele1, $F[$index{"Alt"}], $dp_ref, $dp_alt, $vaf, $cds_change, $aa_change, $sample_id, $F[$index{"cosmic70"}], $F[$index{"avsnp147"}], $F[$index{"ALL.sites.2015_08_edit"}], $F[$index{"esp6500siv2_all"}], $F[$index{"ExAC_ALL"}];
+		print join "\t", $F[$index{"Gene.refGene"}], $F[$index{"Chr"}], $start_pos, $end_pos, $F[$index{"ExonicFunc.refGene"}], $mut_type, $F[$index{"Ref"}], $mut_allele1, $F[$index{"Alt"}], $dp_ref, $dp_alt, $vaf, $cds_change, $aa_change, $sample_id, $F[$index{"cosmic70"}], $F[$index{"avsnp147"}], $F[$index{"ALL.sites.2015_08"}], $F[$index{"esp6500siv2_all"}], $F[$index{"ExAC_ALL"}];
 		print "\n";
 	}
 }
