@@ -14,7 +14,8 @@
         * Control-freeC
         * bedtools 
         * samtools 
-
+   * FACET
+        * snp-pileup
    
    
 # Input file 

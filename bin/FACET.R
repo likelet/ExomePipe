@@ -9,10 +9,10 @@ oo=procSample(xx,cval=150)
 fit=emcncf(oo)
 
 # get purity 
-pur.str <- paste(args[2], " Purity: ", fit$purity, sep = "")
+pur.str <- paste(args[2], " Purity:", fit$purity, sep = "\t")
 
 # write purity into file 
-filecon=file(paste(args[2], "_purity.txt", sep = ""))
+filecon=file(paste(args[2], ".purity.txt", sep = ""))
 writeLines(pur.str,filecon)
 close(filecon)
 

@@ -86,7 +86,7 @@ process BAMqcByQualiMap {
         output:
             file(idSample) into bamQCmappedReport
 
-        when: !params.runQualimap
+        when: params.runQualimap
 
         script:
         """
@@ -223,7 +223,7 @@ bamsTumor = Channel.create()
 recalibratedBam.choice(bamsNormal, bamsTumor) {it[1] == 0 ? 1 : 0}
 // remove status
 
-bamsNormal = bamsNormal.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }.view()
+bamsNormal = bamsNormal.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
 bamsTumor = bamsTumor.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
 
 bamsAll = bamsNormal.combine(bamsTumor, by : 0 )
@@ -231,10 +231,10 @@ bamsAll = bamsNormal.combine(bamsTumor, by : 0 )
     // It's removed from bamsAll Channel (same for genderNormal)
     // /!\ It is assumed that every sample are from the same patient
 
-(bamsAll,bamforFreeC,bamforFACET,BamforMSIsensor) = bamsAll.map {
+(bamsAll,BamforFreeC,BamforFACET,BamforMSIsensor) = bamsAll.map {
     idPatient, idSampleTumor, bamTumor, baiTumor, idSampleNormal, bamNormal, baiNormal ->
     [idPatient, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
-}.view().into(4)
+}.into(4)
 
 //=======================================================================
 // start analysis for futher analysis 
@@ -245,6 +245,9 @@ bamsAll = bamsNormal.combine(bamsTumor, by : 0 )
 // Mutect 
 process RunMutect2 {
         tag {idSampleTumor + "_vs_" + idSampleNormal}
+
+        errorStrategy { task.exitStatus == 143 ? 'retry' : 'terminate' }
+        maxRetries 3
 
         input:
             set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from bamsAll
@@ -424,7 +427,7 @@ if(params.runFreeC){
                 tag {idPatient}
 
                 input:
-                    set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from bamforFreeC
+                    set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamforFreeC
                     file bedfile from Channel.value([
                             referenceMap.intervals
                         ])
@@ -457,7 +460,7 @@ if(params.runFreeC){
 
                 output:
                     file "*"
-                    set idPatient, file("${idPatient}.pileup.gz_ratio.txt") into cnvFileForfreeC
+                    set idPatient, file("${pileTumor}_ratio.txt") into cnvFileForfreeC
                 
                 script:
                 
@@ -494,7 +497,48 @@ if(params.runFreeC){
 /*
 Step 11 Run analysis by FACET(optional)
 */
-if(params.runFACET){     
+if(params.runFACET){    
+    FACETrefMAP = defineFACETref()
+
+    process prepareFACETfile{
+        tag ""
+
+        input:
+                set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamforFACET
+                file snpfile from Channel.value([FACETrefMAP.facetVcf])
+        output:
+                set idPatient, file("${idPatient}.rm.chrM.csv.gz") into preparedFACETfile
+        script:
+                """
+                # get pileup files 
+                snp-pileup -g -q15 -Q20 -P100 -r25,0 ${snpfile} ${idPatient}.csv  ${bamNormal} ${bamTumor}  
+
+                # remove chrX fiel 
+                zcat ${idPatient}.csv | grep -v chrM | gzip - > ${idPatient}.rm.chrM.csv.gz
+
+
+                """
+    }
+
+    process runFACETanalysis{
+        tag ""
+
+        publishDir path: {params.outdir +"/Result/FACET/"+idPatient}, mode: "move"
+
+
+        input:
+                set idPatient, file(csvFile) from preparedFACETfile
+
+        output:
+                file "${idPatient}*"
+
+        script:
+                """
+                # run FACET 
+                Rscript ${baseDir}/bin/FACETS.R ${csvFile} ${idPatient}
+                """
+    }
+
 }
 
 
@@ -514,14 +558,14 @@ if(params.runMSIsensor){
 
 
                 input:
-                    file genomeFile from Channel.value{[referenceMap.genomeFile]}
+                    file genomeFile from Channel.value([referenceMap.genomeFile])
                 output:
                     file "microsatellites.list" into MicrosatellitesListFile 
 
                 script:
 
                     """
-                    msisensor scan -d ${genomeFile}-o microsatellites.list
+                    msisensor scan -d ${genomeFile} -o microsatellites.list
                     """
 
 
@@ -534,14 +578,14 @@ if(params.runMSIsensor){
                 input:
                     set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforMSIsensor
                     file MSIlistfile from MicrosatellitesListFile 
-                    file bedfile from Channel.value{[referenceMap.intervals]}
+                    file bedfile from Channel.value([referenceMap.intervals])
 
                 output:
                     file "${idPatient}*"
 
                 script:
                     """
-                    msisensor msi -d ${MSIlistfile}.list -n ${bamNormal} -t ${bamTumor} -e ${bedfile} -o ${idPatient}
+                    msisensor msi -d ${MSIlistfile} -n ${bamNormal} -t ${bamTumor} -e ${bedfile} -o ${idPatient}
                     """ 
             }
 }
@@ -739,25 +783,45 @@ def helpMessage() {
 
 def minimalInformationMessage() {
   // Minimal information message
-  print_parameter("Command Line: ", workflow.commandLine)
-  print_parameter("Profile     : ", workflow.profile)
-  print_parameter("Project Dir : ", workflow.projectDir)
-  print_parameter("Launch Dir  : ", workflow.launchDir)
-  print_parameter("Work Dir    : ", workflow.workDir)
-  print_parameter("Out Dir     : ", params.outdir)
-  print_parameter("TSV file    : ", tsvFile)
-  print_parameter("dbsnp       : ",referenceMap.dbsnp)
-  print_parameter("genome      : ",referenceMap.genomeFile)
-  print_parameter("intervals   : ",referenceMap.intervals)
+  println LikeletUtils.print_green("-------------------------------------------------------------")
+  println LikeletUtils.print_green("                       Checking Parameters                   ")
+  println LikeletUtils.print_green("-------------------------------------------------------------")
+  print_parameter("\tCommand Line:   ", workflow.commandLine)
+  print_parameter("\tProfile:        ", workflow.profile)
+  print_parameter("\tProject Dir:    ", workflow.projectDir)
+  print_parameter("\tLaunch Dir:     ", workflow.launchDir)
+  print_parameter("\tWork Dir:       ", workflow.workDir)
+  print_parameter("\tOut Dir:        ", params.outdir)
+  print_parameter("\tTSV file:       ", tsvFile)
+  print_parameter("\tdbsnp:          ",referenceMap.dbsnp)
+  print_parameter("\tgenome:         ",referenceMap.genomeFile)
+  print_parameter("\tintervals:      ",referenceMap.intervals)
+  println LikeletUtils.print_green("-------------------------------------------------------------")
+  println LikeletUtils.print_green("#                       Run analysis                          #")
+  println LikeletUtils.print_green("-------------------------------------------------------------")
+  checkAnalysis("\trunFacet:         ",params.runFacet)
+  checkAnalysis("\trunADTex:         ",params.runADTex)
+  checkAnalysis("\trunstrelka:       ",params.runstrelka)
+  checkAnalysis("\trunSequenza:      ",params.runSequenza)
+  checkAnalysis("\trunQualimap:      ",params.runQualimap)
+  checkAnalysis("\trunFreeC:         ",params.runFreeC)
+  checkAnalysis("\trunFACET:         ",params.runFACET)
+  checkAnalysis("\trunMAFsummary:    ",params.runMAFsummary)
+  checkAnalysis("\trunMSIsensor:     ",params.runMSIsensor)
+
+  println LikeletUtils.print_green("-------------------------------------------------------------")
+
+
+
 }
 
 def exomeSeqMessage() {
   // Display Sarek message
     LikeletUtils.sysucc_ascii()
     log.info ''
-    print LikeletUtils.print_yellow('-------------------------------------------------------------')+"\n"
-    print LikeletUtils.print_yellow('=========SYSUCC Exome seq data processing PIPELINE ==========')+"\n"
-    print LikeletUtils.print_yellow('-------------------------------------------------------------')+"\n"
+    print LikeletUtils.print_yellow('==========================================================================')+"\n"
+    print LikeletUtils.print_yellow('=========        SYSUCC Exome seq data processing PIPELINE      ==========')+"\n"
+    print LikeletUtils.print_yellow('==========================================================================')+"\n"
     log.info ''
     log.info 'Usage: '
     log.info 'Nextflow run ExomeseqPipe.nf '
@@ -803,6 +867,12 @@ def defineFREECref() {
   ]
 }
 
+def defineFACETref() {
+  return [
+    'facetVcf'            : checkParamReturnFile("facet_vcf")
+  ]
+}
+
 // spread bam and intervals
 def generateIntervalsForVC(bams, intervals) {
     def (bamsNew, bamsForVC) = bams.into(2)
@@ -812,4 +882,7 @@ def generateIntervalsForVC(bams, intervals) {
 }
 def print_parameter(content, parameter){
     print LikeletUtils.print_cyan(content)+LikeletUtils.print_green(parameter)+"\n"
+}
+def checkAnalysis(software,param){
+if(param) println LikeletUtils.print_cyan(software)+LikeletUtils.print_green(param)+"\n"
 }
