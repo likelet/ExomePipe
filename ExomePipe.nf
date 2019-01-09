@@ -225,72 +225,17 @@ recalibratedBam.choice(bamsNormal, bamsTumor) {it[1] == 0 ? 1 : 0}
 bamsNormal = bamsNormal.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
 bamsTumor = bamsTumor.map { idPatient, status, idSample, bam, bai -> [idPatient, idSample, bam, bai] }
 
-
 bamsAll = bamsNormal.combine(bamsTumor)
     // Since idPatientNormal and idPatientTumor are the same
     // It's removed from bamsAll Channel (same for genderNormal)
     // /!\ It is assumed that every sample are from the same patient
-bamsAll = bamsAll.map {
+(bamsAll,bamforFreeC) = bamsAll.map {
     idPatientNormal, idSampleNormal, bamNormal, baiNormal, idPatientTumor, idSampleTumor, bamTumor, baiTumor ->
     [idPatientNormal, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
-}
+}.into(2)
 
 
-//split input bed into multiple pieces to    help accelerating mutect2 calling 
-process CreateIntervalBeds {
-    tag {intervals.fileName}
 
-    input:
-        file(intervals) from Channel.value(referenceMap.intervals)
-
-    output:
-        file '*.bed' into bedIntervals mode flatten
-
-    script:
-    // the first three column of bed should be chr start and end  , whose coordinate should be 0-based also 
-        """
-        awk -vFS="[:-]" '{
-        name = sprintf("%s_%d-%d", \$1, \$2, \$3);
-        printf("%s\\t%d\\t%d\\n", \$1, \$2, \$3) > name ".bed"
-        }' ${intervals}
-        """
-}
-/*
-// process interval files 
-    bedIntervals = bedIntervals
-    .map { intervalFile ->
-        def duration = 0.0
-        for (line in intervalFile.readLines()) {
-        final fields = line.split('\t')
-        if (fields.size() >= 5) duration += fields[4].toFloat()
-        else {
-            start = fields[1].toInteger()
-            end = fields[2].toInteger()
-            duration += (end - start) / params.nucleotidesPerSecond
-        }
-        }
-        [duration, intervalFile]
-    }.toSortedList({ a, b -> b[0] <=> a[0] })
-    .flatten().collate(2)
-    .map{duration, intervalFile -> intervalFile}
-
-
-    (bamsNormalTemp, bamsNormal, bedIntervals) = generateIntervalsForVC(bamsNormal, bedIntervals)
-    (bamsTumorTemp, bamsTumor, bedIntervals) = generateIntervalsForVC(bamsTumor, bedIntervals)
-    //combine normal and tumor 
-    bamsAll = bamsNormal.combine(bamsTumor)
-    // Since idPatientNormal and idPatientTumor are the same
-    // It's removed from bamsAll Channel (same for genderNormal)
-    // /!\ It is assumed that every sample are from the same patient
-    bamsAll = bamsAll.map {
-    idPatientNormal, idSampleNormal, bamNormal, baiNormal, idPatientTumor, idSampleTumor, bamTumor, baiTumor ->
-    [idPatientNormal, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
-    }
-    // combine interval and bamsALL
-    (bamsTumorNormalIntervals,bamsTumorNormalIntervalsforshow) = bamsAll.spread(bedIntervals).into(2)
-    bamsTumorNormalIntervalsforshow.print()
-
-*/
 // Mutect 
 process RunMutect2 {
         tag {idSampleTumor + "_vs_" + idSampleNormal}
@@ -322,33 +267,7 @@ process RunMutect2 {
 }
 
 
-// merge VCF from split vcf
-/*
-process ConcatVCF {
-        tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
 
-        input:
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcFiles) from mutect2Output
-            file(genomeIndex) from Channel.value(referenceMap.genomeIndex)
-
-        output:
-                // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("*_*.vcf.gz"), file("*_*.vcf.gz.tbi") into vcfConcatenated
-                // TODO DRY with ConcatVCF
-
-        script:
-        outputFile = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}.vcf"
-
-        if(params.targetBED)		// targeted
-                concatOptions = "-i ${genomeIndex} -c ${task.cpus} -o ${outputFile} -t ${params.targetBED}"
-            else										// WGS
-                concatOptions = "-i ${genomeIndex} -c ${task.cpus} -o ${outputFile} "
-
-            """
-            concatenateVCFs.sh ${concatOptions}
-        """
-}
-*/
 /*
 Step 6  Filter Mutect output 
 */
@@ -439,7 +358,7 @@ annovarTXTforSamplefile.map { variantCaller,idPatient, idSampleNormal, idSampleT
 process Convert2MAF{
         tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
 
-        publishDir path: {params.outdir +"/Mutect2_merged_MAF"}, mode: "copy"
+        publishDir path: {params.outdir +"/Result/Mutect2_merged_MAF"}, mode: "copy"
 
         input:
             set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(annotatedTxt) from annovarTXT.collect()
@@ -458,12 +377,13 @@ process Convert2MAF{
 
 /*
 Step 9 MAF summary analysis with MAFtools 
+        sample size should be more than 5.
 */
 if(params.MAF) Mutect_mergedMAF=file(params.MAF)
 
 process MAFsummaryAnalysis{
     tag null
-    publishDir path: {params.outdir +"/MAFtools_summary"}, mode: "copy"
+    publishDir path: {params.outdir +"/Result/MAFtools_summary"}, mode: "copy"
 
     input: 
         set variantCaller, file(MAFsfile) from Mutect_mergedMAF
@@ -471,11 +391,100 @@ process MAFsummaryAnalysis{
         file "*" into MAFtools_Output
     script:
     """
-        Rscript MAFanalysis.R ${MAFsfile}
+        Rscript ${baseDir}/bin/MAFanalysis.R ${MAFsfile}
     """
 
 }
 
+
+
+/*
+Step 10 FreeC analysis pipe (optional)
+*/
+
+if(params.runFreeC){
+            FreeCreferenceMap = defineFREECref()
+
+
+            // Generate pileup files
+            process Generate_Pileup_file_For_freeC{
+                tag {idPatient}
+
+                input:
+                    set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from bamforFreeC
+                    file bedfile from Channel.value([
+                            referenceMap.intervals
+                        ])
+
+                output:
+                    set idPatient, idSampleNormal, file("${idSampleNormal}.pileup.gz"), dSampleTumor, file("${dSampleTumor}.pileup.gz") into pileupFileForConfig
+
+                script:
+                
+                """
+                samtools mpileup -l ${bedfile} -q 20 ${bamNormal} | gzip >  ${idSampleNormal}.pileup.gz
+                samtools mpileup -l ${bedfile} -q 20 ${bamTumor} | gzip >  ${idSampleTumor}.pileup.gz
+                """
+            }
+
+            // Generate pileup files
+            process run_FreeC{
+                tag {idPatient}
+
+                publishDir path: {params.outdir +"/Result/FREEC_OUTPUT/"+idPatient}, mode: "link"
+
+                input:
+                    set idPatient, idSampleNormal, file(pileNormal), idSampleTumor, file(pileTumor)from pileupFileForConfig
+                    set file(chrLenFile), chrFile, file(snpfile),file(bedfile) from Channel.value([
+                                                            FreeCreferenceMap.chrLenFile,
+                                                            FreeCreferenceMap.chrFile,
+                                                            FreeCreferenceMap.snpfile,
+                                                            FreeCreferenceMap.bedfile
+                                                        ])
+
+                output:
+                    file "*"
+                    set idPatient, file("${dSampleTumor}.pileup.gz_ratio.txt") into cnvFileForfreeC
+                
+                script:
+                
+                '''
+                sh !{BaseDir}/bin/generate_Freec_Config_WEX.sh !{bamTumor} !{bamNormal} !{idPatient} !{chrLenFile} !{chrFile} !{snpfile} !{bedfile}
+
+                freec -conf !{idPatient}_freec_config.txt > ${idPatient}_freec.log 
+
+                '''
+            }
+
+            process FREEC_2_GISTIC_coversion{
+                tag {idPatient}
+
+                publishDir path: {params.outdir +"/Result/GISTIC_INPUT/"}, mode: "move"
+
+                input: 
+                    set idPatient, file(ratioFIle) from cnvFileForfreeC
+                    file chrLenFile from Channel.value([
+                                                                FreeCreferenceMap.chrLenFile
+                                                            ])
+                output:
+                    set idPatient,file("${idPatient}.gistic.seg") into GISTICsegFile
+                
+                script:
+                
+                """
+                perl freec_result_to_GISTIC_seg.pl ${ratioFIle} ${chrLenFile} ${idPatient} > ${idPatient}.gistic.seg
+                """
+            }
+
+           
+}
+
+
+/*
+Step 11 Run analysis by FACET(optional)
+*/
+if(params.runFACET){     
+}
 
 // Downstream analysis
 // Copy number analysis
@@ -718,9 +727,20 @@ def defineReferenceMap() {
     'intervals'        : checkParamReturnFile("intervals"),
     // VCFs with known indels (such as 1000 Genomes, Mill’s gold standard)
     'knownIndels'      : checkParamReturnFile("knownIndels"),
-    'knownIndelsIndex' : checkParamReturnFile("knownIndelsIndex"),
+    'knownIndelsIndex' : checkParamReturnFile("knownIndelsIndex")
   ]
 }
+def defineFREECref() {
+  return [
+    'chrLenFile'            : checkParamReturnFile("freec_chrLen"),
+    'chrFile'               : params.freec_chrFile,
+    // snp file for calculating BAF
+    'snpfile'               : checkParamReturnFile("freec_snpfile"),
+    // bed 
+    'bedfile'               : checkParamReturnFile("genomeFile")
+  ]
+}
+
 // spread bam and intervals
 def generateIntervalsForVC(bams, intervals) {
     def (bamsNew, bamsForVC) = bams.into(2)

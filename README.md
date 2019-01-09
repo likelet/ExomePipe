@@ -9,6 +9,11 @@
    * MAFtools 
    * some in-house script 
 
+   * Dependencies for FREEC
+        * Control-freeC
+        * bedtools 
+        * samtools 
+
    
    
 # Input file 
@@ -39,3 +44,8 @@ NOTE: assume each sample has only one libraray
 G15511    XX    0    C09DFN    pathToFiles/C09DFACXX111207.1_1.fastq.gz    pathToFiles/C09DFACXX111207.1_2.fastq.gz
 G15511    XX    1    D0ENMT    pathToFiles/D0ENMACXX111207.1_1.fastq.gz    pathToFiles/D0ENMACXX111207.1_2.fastq.gz
 ```
+
+# Contribution
+
+Qi Zhao
+Xiaolong Zhang 
