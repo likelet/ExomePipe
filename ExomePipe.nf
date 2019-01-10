@@ -38,6 +38,7 @@ if (tsvPath) {
     log.info LikeletUtils.print_red("no sample table specified, plz specified a sample table ") 
     exit 1
 }
+fastqFiles.into{fastqforMapping;fastqforCheckMate}
 
 //start message 
 startMessage()
@@ -49,7 +50,7 @@ process bwa_aligment{
         tag { file_tag }
 
         input:
-        set idPatient, gender, status, idSample, file(fastqFile1), file(fastqFile2) from fastqFiles
+        set idPatient, gender, status, idSample, file(fastqFile1), file(fastqFile2) from fastqforMapping
          set file(genomeFile), file(bwaIndex) from Channel.value([
             referenceMap.genomeFile,
             referenceMap.bwaIndex
@@ -241,176 +242,182 @@ bamsAll = bamsNormal.combine(bamsTumor, by : 0 )
 //=======================================================================
 
 
-
-// Mutect 
-process RunMutect2 {
-        tag {idSampleTumor + "_vs_" + idSampleNormal}
-
-        errorStrategy { task.exitStatus == 143 ? 'retry' : 'terminate' }
-        maxRetries 3
-
-        input:
-            set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from bamsAll
-            file(intervals) from Channel.value(referenceMap.intervals)
-            set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
-            referenceMap.genomeFile,
-            referenceMap.genomeIndex,
-            referenceMap.genomeDict,
-            referenceMap.dbsnp,
-            referenceMap.dbsnpIndex
-            ])
-
-        output:
-            set val("mutect2"), idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}_vs_${idSampleNormal}.vcf") into mutect2Output
-        
-        script:
-        """
-            gatk --java-options "-Xmx${task.memory.toGiga()}g" \
-                Mutect2 \
-                -R ${genomeFile}\
-                -I ${bamTumor}  -tumor ${idSampleTumor} \
-                -I ${bamNormal} -normal ${idSampleNormal} \
-                -L ${intervals} \
-                -O ${idSampleTumor}_vs_${idSampleNormal}.vcf
-        """
-}
-
-
-
 /*
-Step 6  Filter Mutect output 
-*/
-// filtered VCF
-process filtered_Mutect_VCFs{
-        tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
-
-        publishDir path: {params.outdir +"/Result/Mutect2_filtered_VCF"}, mode: "copy"
-        input:
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcf) from mutect2Output
-            set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
-                referenceMap.genomeFile,
-                referenceMap.genomeIndex,
-                referenceMap.genomeDict
-            ])
-
-        output:
-                // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outputFile}") into vcfHardFiltered
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}.somatic.filter_mark.vcf.gz") into vcfMarkedFiltered
-
-        script:
-        outputFile = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}.filtered.vcf"
-
-        """
-            #run filter Mutect
-            gatk --java-options "-Xmx${task.memory.toGiga()}g" \
-                FilterMutectCalls \
-                -V ${vcf} \
-                -O ${idSampleTumor}.somatic.filter_mark.vcf.gz
-
-            # hard filter 
-
-            gatk --java-options "-Xmx${task.memory.toGiga()}g" \
-            SelectVariants \
-            -R ${genomeFile} \
-            -V ${idSampleTumor}.somatic.filter_mark.vcf.gz \
-            -select "vc.isNotFiltered()" \
-            -O ${outputFile}
-
-        """
-}
-
-/*
-Step 7  Annotated filter variants by Annovar 
+Mutect2
 */
 
-process Annotate_Mutect_VCF{
-        tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
 
-        publishDir path: {params.outdir +"/Result/Annotaed_Filtered_VAFs"}, mode: "copy"
+if(params.runMutect2){
+            // Mutect 
+            process RunMutect2 {
+                    tag {idSampleTumor + "_vs_" + idSampleNormal}
 
-        input:
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcfFiltered) from vcfHardFiltered
-            set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
-                referenceMap.genomeFile,
-                referenceMap.genomeIndex,
-                referenceMap.genomeDict
-            ])
+                    errorStrategy { task.exitStatus == 143 ? 'retry' : 'terminate' }
+                    maxRetries 3
 
-        output:
-                // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno.*_multianno.txt") into annovarTXT,annovarTXTforSamplefile
-            
-        script:
-        outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
+                    input:
+                        set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from bamsAll
+                        file(intervals) from Channel.value(referenceMap.intervals)
+                        set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
+                        referenceMap.genomeFile,
+                        referenceMap.genomeIndex,
+                        referenceMap.genomeDict,
+                        referenceMap.dbsnp,
+                        referenceMap.dbsnpIndex
+                        ])
 
-        """
-            table_annovar.pl ${vcfFiltered} ${params.annovarDBpath} -buildver ${params.annovarDB} \
-                    -out ${outName}.somatic.anno -remove \
-                    -otherinfo \
-                    -protocol refGene,cosmic70,avsnp147,ALL.sites.2015_08,EAS.sites.2015_08,esp6500siv2_all,exac03,ljb26_all,clinvar_20161128 \
-                    -operation g,f,f,f,f,f,f,f,f \
-                    -nastring . \
-                    -vcfinput
+                    output:
+                        set val("mutect2"), idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}_vs_${idSampleNormal}.vcf") into mutect2Output
+                    
+                    script:
+                    """
+                        gatk --java-options "-Xmx${task.memory.toGiga()}g" \
+                            Mutect2 \
+                            -R ${genomeFile}\
+                            -I ${bamTumor}  -tumor ${idSampleTumor} \
+                            -I ${bamNormal} -normal ${idSampleNormal} \
+                            -L ${intervals} \
+                            -O ${idSampleTumor}_vs_${idSampleNormal}.vcf
+                    """
+            }
 
-        """
+
+
+            /*
+            Step 6  Filter Mutect output 
+            */
+            // filtered VCF
+            process filtered_Mutect_VCFs{
+                    tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
+
+                    publishDir path: {params.outdir +"/Result/Mutect2_filtered_VCF"}, mode: "copy"
+                    input:
+                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcf) from mutect2Output
+                        set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
+                            referenceMap.genomeFile,
+                            referenceMap.genomeIndex,
+                            referenceMap.genomeDict
+                        ])
+
+                    output:
+                            // we have this funny *_* pattern to avoid copying the raw calls to publishdir
+                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outputFile}") into vcfHardFiltered
+                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}.somatic.filter_mark.vcf.gz") into vcfMarkedFiltered
+
+                    script:
+                    outputFile = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}.filtered.vcf"
+
+                    """
+                        #run filter Mutect
+                        gatk --java-options "-Xmx${task.memory.toGiga()}g" \
+                            FilterMutectCalls \
+                            -V ${vcf} \
+                            -O ${idSampleTumor}.somatic.filter_mark.vcf.gz
+
+                        # hard filter 
+
+                        gatk --java-options "-Xmx${task.memory.toGiga()}g" \
+                        SelectVariants \
+                        -R ${genomeFile} \
+                        -V ${idSampleTumor}.somatic.filter_mark.vcf.gz \
+                        -select "vc.isNotFiltered()" \
+                        -O ${outputFile}
+
+                    """
+            }
+
+            /*
+            Step 7  Annotated filter variants by Annovar 
+            */
+
+            process Annotate_Mutect_VCF{
+                    tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
+
+                    publishDir path: {params.outdir +"/Result/Annotaed_Filtered_VAFs"}, mode: "copy"
+
+                    input:
+                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcfFiltered) from vcfHardFiltered
+                        set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
+                            referenceMap.genomeFile,
+                            referenceMap.genomeIndex,
+                            referenceMap.genomeDict
+                        ])
+
+                    output:
+                            // we have this funny *_* pattern to avoid copying the raw calls to publishdir
+                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno.*_multianno.txt") into annovarTXT,annovarTXTforSamplefile
+                        
+                    script:
+                    outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
+
+                    """
+                        table_annovar.pl ${vcfFiltered} ${params.annovarDBpath} -buildver ${params.annovarDB} \
+                                -out ${outName}.somatic.anno -remove \
+                                -otherinfo \
+                                -protocol refGene,cosmic70,avsnp147,ALL.sites.2015_08,EAS.sites.2015_08,esp6500siv2_all,exac03,ljb26_all,clinvar_20161128 \
+                                -operation g,f,f,f,f,f,f,f,f \
+                                -nastring . \
+                                -vcfinput
+
+                    """
+            }
+
+            /*
+            Step 8  Collapse and convert annoted file into MAF file for futher analysis 
+            */
+
+            annovarTXTforSamplefile.map { variantCaller,idPatient, idSampleNormal, idSampleTumor, vcfFiltered ->
+                "${vcfFiltered}\t${idSampleTumor}\n"
+            }.collectFile(name: 'filelist.txt').set { annoFile_sample}
+
+            annovarTXT2=annovarTXT.map{variantCaller, idPatient, idSampleNormal, idSampleTumor, annotatedTxt ->
+                [annotatedTxt]
+            }
+
+            process Convert2MAF{
+                    tag "Mutect"
+
+                    publishDir path: {params.outdir +"/Result/Mutect2_merged_MAF"}, mode: "copy"
+
+                    input:
+                        file annotatedTxt from annovarTXT2.collect()
+                        file mapFile from annoFile_sample
+                    output:
+                        file "Mutect_Merged.MAF"  into Mutect_mergedMAF
+
+                    script:
+                    """
+                        perl ${baseDir}/bin/Mutect_Annovar_to_MAF.pl filelist.txt > Mutect_Merged.MAF
+
+                    """
+            }
+
+            /*
+            Step 9 MAF summary analysis with MAFtools 
+                    sample size should be more than 5.
+            */
+
+            process MAFsummaryAnalysis{
+                tag "Mutect"
+
+                publishDir path: {params.outdir +"/Result/MAFtools_summary"}, mode: "copy"
+
+                input: 
+                    file MAFsfile  from Mutect_mergedMAF
+                output: 
+                    file "*" into MAFtools_Output
+
+                when:
+                params.runMAFsummary
+
+                script:
+                """
+                    Rscript ${baseDir}/bin/MAFanalysis.R ${MAFsfile}
+                """
+
+            }
 }
 
-/*
-Step 8  Collapse and convert annoted file into MAF file for futher analysis 
-*/
-
-annovarTXTforSamplefile.map { variantCaller,idPatient, idSampleNormal, idSampleTumor, vcfFiltered ->
-    "${vcfFiltered}\t${idSampleTumor}\n"
-}.collectFile(name: 'filelist.txt').set { annoFile_sample}
-
-annovarTXT2=annovarTXT.map{variantCaller, idPatient, idSampleNormal, idSampleTumor, annotatedTxt ->
-    [annotatedTxt]
-}
-
-process Convert2MAF{
-        tag "Mutect"
-
-        publishDir path: {params.outdir +"/Result/Mutect2_merged_MAF"}, mode: "copy"
-
-        input:
-            file annotatedTxt from annovarTXT2.collect()
-            file mapFile from annoFile_sample
-        output:
-            file "Mutect_Merged.MAF"  into Mutect_mergedMAF
-
-        script:
-        """
-            perl ${baseDir}/bin/Mutect_Annovar_to_MAF.pl filelist.txt > Mutect_Merged.MAF
-
-        """
-}
-
-/*
-Step 9 MAF summary analysis with MAFtools 
-        sample size should be more than 5.
-*/
-if(params.MAF) Mutect_mergedMAF=file(params.MAF)
-
-process MAFsummaryAnalysis{
-    tag "Mutect"
-
-    publishDir path: {params.outdir +"/Result/MAFtools_summary"}, mode: "copy"
-
-    input: 
-        file MAFsfile  from Mutect_mergedMAF
-    output: 
-        file "*" into MAFtools_Output
-
-    when:
-    params.runMAFsummary
-
-    script:
-    """
-        Rscript ${baseDir}/bin/MAFanalysis.R ${MAFsfile}
-    """
-
-}
 
 
 
@@ -486,7 +493,7 @@ if(params.runFreeC){
                 script:
                 
                 """
-                perl freec_result_to_GISTIC_seg.pl ${ratioFIle} ${chrLenFile} ${idPatient} > ${idPatient}.gistic.seg
+                perl ${baseDir}/bin/freec_result_to_GISTIC_seg.pl ${ratioFIle} ${chrLenFile} ${idPatient} > ${idPatient}.gistic.seg
                 """
             }
 
@@ -498,46 +505,46 @@ if(params.runFreeC){
 Step 11 Run analysis by FACET(optional)
 */
 if(params.runFACET){    
-    FACETrefMAP = defineFACETref()
+            FACETrefMAP = defineFACETref()
 
-    process prepareFACETfile{
-        tag ""
+            process prepareFACETfile{
+                tag ""
 
-        input:
-                set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamforFACET
-                file snpfile from Channel.value([FACETrefMAP.facetVcf])
-        output:
-                set idPatient, file("${idPatient}.rm.chrM.csv.gz") into preparedFACETfile
-        script:
-                """
-                # get pileup files 
-                snp-pileup -g -q15 -Q20 -P100 -r25,0 ${snpfile} ${idPatient}.csv  ${bamNormal} ${bamTumor}  
+                input:
+                        set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamforFACET
+                        file snpfile from Channel.value([FACETrefMAP.facetVcf])
+                output:
+                        set idPatient, file("${idPatient}.rm.chrM.csv.gz") into preparedFACETfile
+                script:
+                        """
+                        # get pileup files 
+                        snp-pileup -g -q15 -Q20 -P100 -r25,0 ${snpfile} ${idPatient}.csv  ${bamNormal} ${bamTumor}  
 
-                # remove chrX fiel 
-                zcat ${idPatient}.csv | grep -v chrM | gzip - > ${idPatient}.rm.chrM.csv.gz
-
-
-                """
-    }
-
-    process runFACETanalysis{
-        tag ""
-
-        publishDir path: {params.outdir +"/Result/FACET/"+idPatient}, mode: "move"
+                        # remove chrX fiel 
+                        zcat ${idPatient}.csv | grep -v chrM | gzip - > ${idPatient}.rm.chrM.csv.gz
 
 
-        input:
-                set idPatient, file(csvFile) from preparedFACETfile
+                        """
+            }
 
-        output:
-                file "${idPatient}*"
+            process runFACETanalysis{
+                tag ""
 
-        script:
-                """
-                # run FACET 
-                Rscript ${baseDir}/bin/FACETS.R ${csvFile} ${idPatient}
-                """
-    }
+                publishDir path: {params.outdir +"/Result/FACET/"+idPatient}, mode: "move"
+
+
+                input:
+                        set idPatient, file(csvFile) from preparedFACETfile
+
+                output:
+                        file "${idPatient}*"
+
+                script:
+                        """
+                        # run FACET 
+                        Rscript ${baseDir}/bin/FACETS.R ${csvFile} ${idPatient}
+                        """
+            }
 
 }
 
@@ -587,6 +594,47 @@ if(params.runMSIsensor){
                     """
                     msisensor msi -d ${MSIlistfile} -n ${bamNormal} -t ${bamTumor} -e ${bedfile} -o ${idPatient}
                     """ 
+            }
+}
+
+
+
+// NGScheckmate
+if(params.runNGScheckmate){
+
+            NGScheckmateRefMap = defineNGScheckMateRef()
+
+            (fastqforCheckMateFile,fastqforCheckMate)=fastqforCheckMate.into(2)
+            fastqforCheckMateFile.map{
+                idPatient, gender, status, idSample, fastqFile1, fastqFile2 ->
+                "${fastqFile1.name}\t${fastqFile2.name}\t${idSample}\n"
+            }.collectFile(name: "inputfile_forCheckmate.txt").set{InputFastqList}
+
+            fastqforCheckMate.map{
+                idPatient, gender, status, idSample, fastqFile1, fastqFile2 ->
+                [fastqFile1,fastqFile2]
+            }.set{fastqforCheckMate}
+
+
+            process runNGScheckmateAnalysis{
+                tag ""
+
+                publishDir path: {params.outdir +"/Result/NGScheckMate/"}, mode: "move"
+
+                input:
+                    file fastqFile from fastqforCheckMate.collect()
+                    file fastqFilelist from InputFastqList
+                    file snpPTfile from Channel.value([NGScheckmateRefMap.NGScheckmatePTfile])
+                output:
+
+                    file "*"
+
+                script:
+               
+                    """
+                        ncm_fastq.py -l ${fastqFilelist} -pt ${snpPTfile} -p ${task.cpus} -O checkmate
+                    """
+
             }
 }
 
@@ -797,7 +845,7 @@ def minimalInformationMessage() {
   print_parameter("\tgenome:         ",referenceMap.genomeFile)
   print_parameter("\tintervals:      ",referenceMap.intervals)
   println LikeletUtils.print_green("-------------------------------------------------------------")
-  println LikeletUtils.print_green("#                       Run analysis                          #")
+  println LikeletUtils.print_green("#                       Run analysis                          ")
   println LikeletUtils.print_green("-------------------------------------------------------------")
   checkAnalysis("\trunFacet:         ",params.runFacet)
   checkAnalysis("\trunADTex:         ",params.runADTex)
@@ -808,7 +856,7 @@ def minimalInformationMessage() {
   checkAnalysis("\trunFACET:         ",params.runFACET)
   checkAnalysis("\trunMAFsummary:    ",params.runMAFsummary)
   checkAnalysis("\trunMSIsensor:     ",params.runMSIsensor)
-
+  checkAnalysis("\trunNGScheckmate:  ",params.runNGScheckmate)
   println LikeletUtils.print_green("-------------------------------------------------------------")
 
 
@@ -873,6 +921,13 @@ def defineFACETref() {
   ]
 }
 
+def defineNGScheckMateRef() {
+  return [
+    'NGScheckmatePTfile'  : checkParamReturnFile("NGScheckmatePTfile")
+  ]
+}
+
+
 // spread bam and intervals
 def generateIntervalsForVC(bams, intervals) {
     def (bamsNew, bamsForVC) = bams.into(2)
@@ -881,8 +936,8 @@ def generateIntervalsForVC(bams, intervals) {
     return [bamsForVCNew, bamsNew, intervalsNew]
 }
 def print_parameter(content, parameter){
-    print LikeletUtils.print_cyan(content)+LikeletUtils.print_green(parameter)+"\n"
+    println LikeletUtils.print_cyan(content)+LikeletUtils.print_green(parameter)
 }
 def checkAnalysis(software,param){
-if(param) println LikeletUtils.print_cyan(software)+LikeletUtils.print_green(param)+"\n"
+if(param) println LikeletUtils.print_yellow(software)+LikeletUtils.print_green(param)
 }
