@@ -194,7 +194,6 @@ process RecalibrateBam {
         output:
             set idPatient, status, idSample, file("${idSample}.recal.bam"), file("${idSample}.recal.bai") into recalibratedBam, recalibratedBamForStats
             set idPatient, status, idSample, val("${idSample}.recal.bam"), val("${idSample}.recal.bai") into recalibratedBamTSV
-
         script:
         """
         gatk --java-options -Xmx${task.memory.toGiga()}g \
@@ -251,6 +250,9 @@ if(params.runMutect2){
             // Mutect 
             process RunMutect2 {
                     tag {idSampleTumor + "_vs_" + idSampleNormal}
+                    publishDir  pattern: "*.bam", 
+                                path: {params.outdir +"/Result/Mutect2_bamforReview"}, mode: "move"
+
 
                     errorStrategy { task.exitStatus == 143 ? 'retry' : 'terminate' }
                     maxRetries 3
@@ -268,8 +270,10 @@ if(params.runMutect2){
 
                     output:
                         set val("mutect2"), idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}_vs_${idSampleNormal}.vcf") into mutect2Output
-                    
+                        
                     script:
+
+                    bamforReview = "${idSampleTumor}_${idSampleTumor}_for_review.bam"
                     """
                         gatk --java-options "-Xmx${task.memory.toGiga()}g" \
                             Mutect2 \
@@ -278,6 +282,7 @@ if(params.runMutect2){
                             -I ${bamNormal} -normal ${idSampleNormal} \
                             -L ${intervals} \
                             -O ${idSampleTumor}_vs_${idSampleNormal}.vcf
+                            -bamout ${bamforReview}
                     """
             }
 
@@ -857,6 +862,7 @@ def minimalInformationMessage() {
   checkAnalysis("\trunMAFsummary:    ",params.runMAFsummary)
   checkAnalysis("\trunMSIsensor:     ",params.runMSIsensor)
   checkAnalysis("\trunNGScheckmate:  ",params.runNGScheckmate)
+  checkAnalysis("\trun Mutect2:      ",params.runMutect2)
   println LikeletUtils.print_green("-------------------------------------------------------------")
 
 
