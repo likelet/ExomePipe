@@ -3,7 +3,7 @@
    * fastp
    * bwa 
    * picard/samtools 
-   * gatk4
+   * gatk4 (CNV analysis)
    * mutect2
    * annovar and annovar DB
    * MAFtools 
@@ -16,7 +16,11 @@
         * samtools 
    * FACET
         * snp-pileup
-   
+
+   * NGScheckmate
+        * bcftools
+        * python
+        * samtools
    
 # Input file 
 

@@ -29,5 +29,5 @@ dependencies:
   - r-circlize=0.4.5
   - r-rcolorbrewer=1.1_2
   - r-venndiagram=1.6.20
-  - tophat=2.1.1
   - bedtools=2.27.1
+  - msisensor 

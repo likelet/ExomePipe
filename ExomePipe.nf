@@ -231,10 +231,10 @@ bamsAll = bamsNormal.combine(bamsTumor, by : 0 )
     // It's removed from bamsAll Channel (same for genderNormal)
     // /!\ It is assumed that every sample are from the same patient
 
-(bamsAll,BamforFreeC,BamforFACET,BamforMSIsensor) = bamsAll.map {
+(bamsAll,BamforFreeC,BamforFACET,BamforMSIsensor,BamforGATK4CNV) = bamsAll.map {
     idPatient, idSampleTumor, bamTumor, baiTumor, idSampleNormal, bamNormal, baiNormal ->
     [idPatient, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
-}.into(4)
+}.into(5)
 
 //=======================================================================
 // start analysis for futher analysis 
@@ -505,7 +505,6 @@ if(params.runFreeC){
            
 }
 
-
 /*
 Step 11 Run analysis by FACET(optional)
 */
@@ -553,14 +552,9 @@ if(params.runFACET){
 
 }
 
-
-
-
 /*
 Step 12 MSI-sensor 
 */
-
-
 if(params.runMSIsensor){
 
             process scanMSIfromGenome{
@@ -602,6 +596,137 @@ if(params.runMSIsensor){
             }
 }
 
+/*
+ Step 13 Run CNV analysis by GATK4 (optional)
+*/
+// make sure the relative package should be installed in your system if you are going to plot cnv result by GATK
+//https://github.com/broadinstitute/gatk-protected/blob/master/scripts/install_R_packages.R
+if(params.rungatk4CNV){
+            process GAKT4_CalculateTargetCoverage{
+                tag {idPatient}
+                    input:
+                        set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforGATK4CNV
+                        file(intervals) from Channel.value(referenceMap.intervals)
+
+                        output:
+
+                        set idPatient,file("${idPatient}.tumor.cov.txt") into tumorCovFiles
+                        set idPatient,file("${idPatient}.normal.cov.txt") into normalCovFiles
+
+                    script:
+                            """
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g" CalculateTargetCoverage \
+                                    -I ${bamTumor} \
+                                    -T ${intervals} \
+                                    -transform PCOV \
+                                    -groupBy SAMPLE \
+                                    -targetInfo FULL \
+                                    –keepdups \
+                                    -O ${idPatient}.tumor.cov.txt
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g" CalculateTargetCoverage \
+                                    -I ${bamNormal} \
+                                    -T ${intervals} \
+                                    -transform PCOV \
+                                    -groupBy SAMPLE \
+                                    -targetInfo FULL \
+                                    –keepdups \
+                                    -O ${idPatient}.normal.cov.txt
+                            """  
+                
+            }
+            
+            (NormalCovFilesForfile, NormalCovFilesForMerge) = normalCovFiles.map{idPatient, normalCovFiles ->[normalCovFiles]}.into(2)
+            NormalCovFilesForfile.collectFile { file -> ['lncRNA.gtflist', file.name + '\n'] }
+                        .set { NormalCNVfilelist }
+
+
+             process GAKT4_CreatePanelOfNormals{
+                tag "creat PON"
+                input:
+                    file normalCNVfilelist from NormalCNVfilelist
+                    file normallist from NormalCovFilesForMerge.collect()
+
+                    output:
+                        
+                    file  "normals.CNV.pon"  into NormalCNVpon
+                    script:
+                            """
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  CombineReadCounts \
+                                -inputList ${normalCNVfilelist} \
+                                -O combined-normals.tsv
+
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g" CreatePanelOfNormals \
+                                -I combined-normals.tsv \
+                                -O normals.CNV.pon \
+                                -noQC \
+                                --disableSpark \
+                                --minimumTargetFactorPercentileThreshold 5 
+                            """  
+                
+            }
+
+            process GAKT4_NormalizeSomaticReadCounts{
+                tag {idPatient}
+                input:
+                    file NormalCNVpon
+                    set idPatient,file(tumorPcov) from tumorCovFiles
+
+                output:
+                    set idPatient,file("${idPatient}.tn.tsv") into TumorNormalizedCoverageFile,TumorNormalizedCoverageFileForCallSeg
+                script:
+                            """
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  NormalizeSomaticReadCounts \
+                                -I ${tumorPcov} \
+                                -PON ${NormalCNVpon} \
+                                -PTN ${idPatient}.ptn.tsv \
+                                -TN ${idPatient}.tn.tsv
+                            """  
+                
+            }
+
+             process GAKT4_PerformSegmentation{
+                tag {idPatient}
+
+                publishDir path: {params.outdir +"/Result/GATK4_CNV"}, mode: "copy"
+                input:
+                    set idPatient,file(tumorNcov) from TumorNormalizedCoverageFile
+
+                output:
+                    
+                    set idPatient,file("${idPatient}.gatk.seg ") into TumorCNVsegFile
+
+                script:
+                            """
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  PerformSegmentation \
+                                -TN ${tumorNcov} \
+                                -O ${idPatient}.gatk.seg \
+                                -LOG
+                            """  
+                
+            }
+            TumorNormalizedCoverageFileForCallSeg.join(TumorCNVsegFile).set{TumorSegforCallSeg}
+             
+            process GAKT4_CallSegments{
+                tag {idPatient}
+
+                publishDir path: {params.outdir +"/Result/GATK4_CNV"}, mode: "copy"
+                input:
+                    set idPatient,file(tumorTN),file(tumorCNVseg) from TumorSegforCallSeg
+
+                output:
+                    file "${idPatient}.called.tsv"
+                    
+                script:
+                            """
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  CallSegments \
+                                  -TN ${tumorTN} \
+                                  -S ${tumorCNVseg} \
+                                  -O ${idPatient}.called.tsv
+                            """  
+                
+            }
+            
+}
 
 
 // NGScheckmate
@@ -863,10 +988,8 @@ def minimalInformationMessage() {
   checkAnalysis("\trunMSIsensor:     ",params.runMSIsensor)
   checkAnalysis("\trunNGScheckmate:  ",params.runNGScheckmate)
   checkAnalysis("\trun Mutect2:      ",params.runMutect2)
+  checkAnalysis("\trun GATK4 based CNV analysis:      ",params.rungatk4CNV)
   println LikeletUtils.print_green("-------------------------------------------------------------")
-
-
-
 }
 
 def exomeSeqMessage() {
