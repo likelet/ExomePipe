@@ -9,7 +9,7 @@
 // - annovar
 // - bcftools
 
-
+version="0.0.3"
 
 //user options
 if (params.help) {
@@ -231,10 +231,10 @@ bamsAll = bamsNormal.combine(bamsTumor, by : 0 )
     // It's removed from bamsAll Channel (same for genderNormal)
     // /!\ It is assumed that every sample are from the same patient
 
-(bamsAll,BamforFreeC,BamforFACET,BamforMSIsensor,BamforGATK4CNV) = bamsAll.map {
+(bamsAll,BamforFreeC,BamforFACET,BamforMSIsensor,BamforGATK4CNV,BamforGATKallelicCounts) = bamsAll.map {
     idPatient, idSampleTumor, bamTumor, baiTumor, idSampleNormal, bamNormal, baiNormal ->
     [idPatient, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
-}.into(5)
+}.into(6)
 
 //=======================================================================
 // start analysis for futher analysis 
@@ -261,11 +261,11 @@ if(params.runMutect2){
                         set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from bamsAll
                         file(intervals) from Channel.value(referenceMap.intervals)
                         set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
-                        referenceMap.genomeFile,
-                        referenceMap.genomeIndex,
-                        referenceMap.genomeDict,
-                        referenceMap.dbsnp,
-                        referenceMap.dbsnpIndex
+                            referenceMap.genomeFile,
+                            referenceMap.genomeIndex,
+                            referenceMap.genomeDict,
+                            referenceMap.dbsnp,
+                            referenceMap.dbsnpIndex
                         ])
 
                     output:
@@ -602,126 +602,216 @@ if(params.runMSIsensor){
 // make sure the relative package should be installed in your system if you are going to plot cnv result by GATK
 //https://github.com/broadinstitute/gatk-protected/blob/master/scripts/install_R_packages.R
 if(params.rungatk4CNV){
-            process GAKT4_CalculateTargetCoverage{
+
+            process preprocessTargegetlist {
+                tag ""
+                input:
+                    set file(genomeFile),file(genomeIndex),file(genomeDict),file(intervals) from Channel.value([
+                        referenceMap.genomeFile,
+                        referenceMap.genomeIndex,
+                        referenceMap.genomeDict,
+                        referenceMap.intervals
+                        ])
+
+                output:
+                    file "targets_C.preprocessed.interval_list" into ProcessedInterval
+                script:
+                """
+                    gatk --java-options "-Xmx${task.memory.toGiga()}g"  PreprocessIntervals \
+                        -L ${intervals} \
+                        -R ${genomeFile} \
+                        --bin-length 0 \
+                        --interval-merging-rule OVERLAPPING_ONLY \
+                        -O targets_C.preprocessed.interval_list
+                """
+            }
+            process GAKT4_CollectReadCounts{
                 tag {idPatient}
                     input:
                         set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforGATK4CNV
-                        file(intervals) from Channel.value(referenceMap.intervals)
+                        file Pintervals from ProcessedInterval
 
                         output:
 
-                        set idPatient,file("${idPatient}.tumor.cov.txt") into tumorCovFiles
-                        set idPatient,file("${idPatient}.normal.cov.txt") into normalCovFiles
+                        set idPatient,file("${idPatient}.tumor.counts.hdf5") into tumorCovFiles
+                        file "${idPatient}.normal.counts.hdf5"  into normalCovFiles
 
                     script:
                             """
-                            gatk --java-options "-Xmx${task.memory.toGiga()}g" CalculateTargetCoverage \
-                                    -I ${bamTumor} \
-                                    -T ${intervals} \
-                                    -transform PCOV \
-                                    -groupBy SAMPLE \
-                                    -targetInfo FULL \
-                                    –keepdups \
-                                    -O ${idPatient}.tumor.cov.txt
-                            gatk --java-options "-Xmx${task.memory.toGiga()}g" CalculateTargetCoverage \
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g" CollectReadCounts  \
+                                      -I ${bamTumor} \
+                                      -L ${Pintervals} \
+                                      --interval-merging-rule OVERLAPPING_ONLY \
+                                      -O ${idPatient}.tumor.counts.hdf5
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g" CollectReadCounts  \
                                     -I ${bamNormal} \
-                                    -T ${intervals} \
-                                    -transform PCOV \
-                                    -groupBy SAMPLE \
-                                    -targetInfo FULL \
-                                    –keepdups \
-                                    -O ${idPatient}.normal.cov.txt
+                                    -L ${Pintervals} \
+                                    --interval-merging-rule OVERLAPPING_ONLY \
+                                    -O ${idPatient}.normal.counts.hdf5
                             """  
                 
             }
             
-            (NormalCovFilesForfile, NormalCovFilesForMerge) = normalCovFiles.map{idPatient, normalCovFiles ->[normalCovFiles]}.into(2)
-            NormalCovFilesForfile.collectFile { file -> ['lncRNA.gtflist', file.name + '\n'] }
-                        .set { NormalCNVfilelist }
+            (NormalCovFilesForfile, NormalCovFilesForMerge) = normalCovFiles.into(2)
+            NormalCovFilesForfile.collectFile { file -> ['argument.file', "-I "+file.name + ' '] }.set { normalPONargmentFile }
 
 
-             process GAKT4_CreatePanelOfNormals{
+             process GAKT4_CreateReadCountPanelOfNormals{
                 tag "creat PON"
                 input:
-                    file normalCNVfilelist from NormalCNVfilelist
+                    file normalCNVfilelist from normalPONargmentFile
                     file normallist from NormalCovFilesForMerge.collect()
 
                     output:
                         
-                    file  "normals.CNV.pon"  into NormalCNVpon
+                    file  "cnvponC.pon.hdf5"  into NormalCNVpon
                     script:
                             """
-                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  CombineReadCounts \
-                                -inputList ${normalCNVfilelist} \
-                                -O combined-normals.tsv
-
-                            gatk --java-options "-Xmx${task.memory.toGiga()}g" CreatePanelOfNormals \
-                                -I combined-normals.tsv \
-                                -O normals.CNV.pon \
-                                -noQC \
-                                --disableSpark \
-                                --minimumTargetFactorPercentileThreshold 5 
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g" CreateReadCountPanelOfNormals \
+                                --minimum-interval-median-percentile 5 \
+                                --arguments_file ${normalCNVfilelist} \
+                                --output ./
+                                -O cnvponC.pon.hdf5
                             """  
                 
             }
 
-            process GAKT4_NormalizeSomaticReadCounts{
+            process GAKT4_DenoiseReadCounts{
                 tag {idPatient}
                 input:
                     file NormalCNVpon
                     set idPatient,file(tumorPcov) from tumorCovFiles
 
                 output:
-                    set idPatient,file("${idPatient}.tn.tsv") into TumorNormalizedCoverageFile,TumorNormalizedCoverageFileForCallSeg
+                    set idPatient,file("${idPatient}.denoisedCR.tsv") into TumorDenoiseReadCounts,TumorDenoiseReadCountsForCallSeg,TumorDenoiseReadCountsForPlot
+                    set idPatient,file("${idPatient}.standardizedCR.tsv"),file("${idPatient}.denoisedCR.tsv") into DiagnosisCRforPlot
                 script:
                             """
-                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  NormalizeSomaticReadCounts \
-                                -I ${tumorPcov} \
-                                -PON ${NormalCNVpon} \
-                                -PTN ${idPatient}.ptn.tsv \
-                                -TN ${idPatient}.tn.tsv
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g"   DenoiseReadCounts \
+                                -I ${tumorPcov}  \
+                                --count-panel-of-normals ${NormalCNVpon} \
+                                --standardized-copy-ratios ${idPatient}.standardizedCR.tsv \
+                                --denoised-copy-ratios ${idPatient}.denoisedCR.tsv
                             """  
                 
             }
 
-             process GAKT4_PerformSegmentation{
+            process GAKT4_PlotDenoisedCopyRatios{
                 tag {idPatient}
+                publishDir path: {params.outdir +"/Result/GATK4_CNV/plot"}, mode: "move"
 
-                publishDir path: {params.outdir +"/Result/GATK4_CNV"}, mode: "copy"
                 input:
-                    set idPatient,file(tumorNcov) from TumorNormalizedCoverageFile
-
+                    set idPatient,file(standardizedCR),file(denoisedCR) from DiagnosisCRforPlot
+                    file genomeDict from Channel.value([referenceMap.genomeDict])
                 output:
-                    
-                    set idPatient,file("${idPatient}.gatk.seg ") into TumorCNVsegFile
+    
+                   file "*"
 
                 script:
                             """
-                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  PerformSegmentation \
-                                -TN ${tumorNcov} \
-                                -O ${idPatient}.gatk.seg \
-                                -LOG
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  PlotDenoisedCopyRatios \
+                                    --standardized-copy-ratios ${standardizedCR}\
+                                    --denoised-copy-ratios ${denoisedCR}\
+                                    --sequence-dictionary ${genomeDict} \
+                                    --minimum-contig-length 46709983 \
+                                    --output sandbox/plots \
+                                    --output-prefix ${idPatient}
                             """  
                 
             }
-            TumorNormalizedCoverageFileForCallSeg.join(TumorCNVsegFile).set{TumorSegforCallSeg}
-             
-            process GAKT4_CallSegments{
+            
+
+
+            process GATK4_CollectAllelicCounts{
+                tag {idPatient}
+                input:
+                    set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforGATKallelicCounts
+                    set file(genomeFile),file(genomeDict),file(genomeIndex),file(knownTargetSnp),file(knownTargetSnpIndex) from Channel.value([
+                        referenceMap.genomeFile,
+                        referenceMap.genomeDict,
+                        referenceMap.genomeIndex,
+                        referenceMap.knownTargetSnp,
+                        referenceMap.knownTargetSnpIndex
+                        ])
+                output:
+                    set idPatient,file("${idPatient}.tumor.allelicCounts.tsv"),file("${idPatient}.normal.allelicCounts.tsv") into AllelicCountTSV
+
+                script:
+                """
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  CollectAllelicCounts \
+                                -L  ${knownTargetSnp}\
+                                -I  ${bamNormal} \
+                                -R ${genomeFile} \
+                                -O ${idPatient}.normal.allelicCounts.tsv
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  CollectAllelicCounts \
+                                -L  ${knownTargetSnp}\
+                                -I  ${bamTumor} \
+                                -R ${genomeFile} \
+                                -O ${idPatient}.tumor.allelicCounts.tsv
+                """
+            }
+
+            AllelicCountTSV.join(TumorDenoiseReadCountsForCallSeg).set{AllelicCountTSV_TumorDenoiseReadCountsForCallSeg}
+
+            process GAKT4_ModelSegments{
                 tag {idPatient}
 
-                publishDir path: {params.outdir +"/Result/GATK4_CNV"}, mode: "copy"
                 input:
-                    set idPatient,file(tumorTN),file(tumorCNVseg) from TumorSegforCallSeg
+                    set idPatient, file(tumorAlliecCount),file(normalAlliecCount),file(tumorDenosiseCount) from AllelicCountTSV_TumorDenoiseReadCountsForCallSeg
 
                 output:
-                    file "${idPatient}.called.tsv"
-                    
+                    set idPatient, file("${idPatient}.cr.seg") into TumorCRsegment
+                    set idPatient, file("${idPatient}.hets.tsv"),file("${idPatient}.modelFinal.seg") into TumorSegmentFileForPlot
+                script:
+                """
+                 gatk --java-options "-Xmx${task.memory.toGiga()}g"  ModelSegments \
+                        --denoised-copy-ratios ${tumorDenosiseCount} \
+                        --allelic-counts ${tumorAlliecCount} \
+                        --normal-allelic-counts ${normalAlliecCount}\
+                        --output ./ \
+                        --output-prefix ${idPatient}
+                """
+            }
+            process GAKT4_CallCopyRatioSegments{
+                 tag {idPatient}
+                 input:
+                    set idPatient, file(tumorCRsegment) from TumorCRsegment
+
+                output:
+                    set idPatient, file("${idPatient}.called.seg") into TumorCallSegment
+
+                script:
+                """
+                 gatk --java-options "-Xmx${task.memory.toGiga()}g"  CallCopyRatioSegments \
+                      --input ${tumorCRsegment}\
+                      --output ${idPatient}.called.seg
+                """
+            }
+
+
+            TumorSegmentFileForPlot.join(TumorDenoiseReadCountsForPlot).set{ TumorSegment_TumorDenoiseReadCountsForPlot}
+
+             process GAKT4_PlotModeledSegments{
+                tag {idPatient}
+
+                publishDir path: {params.outdir +"/Result/GATK4_CNV/plot"}, mode: "move"
+                input:
+                    set idPatient,file(tumorHetTsv),file(tumoFinalSeg),file(tumorDenosiseCount) from TumorSegment_TumorDenoiseReadCountsForPlot
+                    file genomeDict from Channel.value([referenceMap.genomeDict])
+                output:
+    
+                   file "*"
+
                 script:
                             """
-                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  CallSegments \
-                                  -TN ${tumorTN} \
-                                  -S ${tumorCNVseg} \
-                                  -O ${idPatient}.called.tsv
+                            gatk --java-options "-Xmx${task.memory.toGiga()}g"  PlotModeledSegments \
+                                --denoised-copy-ratios ${tumorDenosiseCount} \
+                                --allelic-counts ${tumorHetTsv} \
+                                --segments ${tumoFinalSeg}\
+                                --sequence-dictionary ${genomeDict} \
+                                --minimum-contig-length 46709983 \
+                                --output ./ \
+                                --output-prefix ${idPatient}
                             """  
                 
             }
@@ -1030,7 +1120,10 @@ def defineReferenceMap() {
     'intervals'        : checkParamReturnFile("intervals"),
     // VCFs with known indels (such as 1000 Genomes, Mill’s gold standard)
     'knownIndels'      : checkParamReturnFile("knownIndels"),
-    'knownIndelsIndex' : checkParamReturnFile("knownIndelsIndex")
+    'knownIndelsIndex' : checkParamReturnFile("knownIndelsIndex"),
+    // common snps located in the target region
+    'knownTargetSnp' : checkParamReturnFile("knownTargetSnp"),
+    'knownTargetSnpIndex' : checkParamReturnFile("knownTargetSnpIndex")
   ]
 }
 def defineFREECref() {
