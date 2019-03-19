@@ -553,7 +553,7 @@ if(params.runFACET){
 }
 
 /*
-Step 12 MSI-sensor 
+Step 12 MSI-sensor (optional)
 */
 if(params.runMSIsensor){
 
