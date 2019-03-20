@@ -359,8 +359,8 @@ if(params.runMutect2){
                         table_annovar.pl ${vcfFiltered} ${params.annovarDBpath} -buildver ${params.annovarDB} \
                                 -out ${outName}.somatic.anno -remove \
                                 -otherinfo \
-                                -protocol refGene,cosmic70,avsnp147,ALL.sites.2015_08,EAS.sites.2015_08,esp6500siv2_all,exac03,ljb26_all,clinvar_20161128 \
-                                -operation g,f,f,f,f,f,f,f,f \
+                                -protocol ${params.annovarProtocol} \
+                                -operation ${params.annovarOperation}\
                                 -nastring . \
                                 -vcfinput
 
