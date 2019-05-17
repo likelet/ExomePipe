@@ -231,7 +231,7 @@ bamsAll = bamsNormal.combine(bamsTumor, by : 0 )
     // It's removed from bamsAll Channel (same for genderNormal)
     // /!\ It is assumed that every sample are from the same patient
 
-(bamsAll,BamforFreeC,BamforFACET,BamforMSIsensor,BamforGATK4CNV,BamforGATKallelicCounts) = bamsAll.map {
+(bamsAll,BamforFreeC,BamforFACET,BamforMSIsensor,BamforGATK4CNV,BamforGATKallelicCounts,BamForDelly) = bamsAll.map {
     idPatient, idSampleTumor, bamTumor, baiTumor, idSampleNormal, bamNormal, baiNormal ->
     [idPatient, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
 }.into(6)
@@ -250,8 +250,6 @@ if(params.runMutect2){
             // Mutect 
             process RunMutect2 {
                     tag {idSampleTumor + "_vs_" + idSampleNormal}
-                    publishDir  pattern: "*.bam", 
-                                path: {params.outdir +"/Result/Mutect2_bamforReview"}, mode: "move"
 
 
                     errorStrategy { task.exitStatus == 143 ? 'retry' : 'terminate' }
@@ -282,7 +280,6 @@ if(params.runMutect2){
                             -I ${bamNormal} -normal ${idSampleNormal} \
                             -L ${intervals} \
                             -O ${idSampleTumor}_vs_${idSampleNormal}.vcf
-                            -bamout ${bamforReview}
                     """
             }
 
@@ -360,7 +357,7 @@ if(params.runMutect2){
                                 -out ${outName}.somatic.anno -remove \
                                 -otherinfo \
                                 -protocol ${params.annovarProtocol} \
-                                -operation ${params.annovarOperation}\
+                                -operation ${params.annovarOperation} \
                                 -nastring . \
                                 -vcfinput
 
@@ -373,7 +370,7 @@ if(params.runMutect2){
 
             annovarTXTforSamplefile.map { variantCaller,idPatient, idSampleNormal, idSampleTumor, vcfFiltered ->
                 "${vcfFiltered}\t${idSampleTumor}\n"
-            }.collectFile(name: 'filelist.txt').set { annoFile_sample}
+            }.collectFile(name: 'filelist.txt').set {annoFile_sample}
 
             annovarTXT2=annovarTXT.map{variantCaller, idPatient, idSampleNormal, idSampleTumor, annotatedTxt ->
                 [annotatedTxt]
@@ -818,6 +815,58 @@ if(params.rungatk4CNV){
             
 }
 
+/*
+ Step 14 Run SV analysis by Delly (optional)
+*/
+
+// plz make sure that the delly installed in your system 
+// to conver bcf to vcf, we also need bcftools
+if(params.runDelly){
+    delly_exc = file(params.delly_exclute)
+    process runDellyCallSV {
+
+     
+      input:
+    
+            set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamForDelly
+            file delly_exc  
+            set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
+                            referenceMap.genomeFile,
+                            referenceMap.genomeIndex,
+                            referenceMap.genomeDict
+                        ])          
+      output:
+            set idPatient, file("${idPatient}.delly.bcf") into DellyOutBcf
+      script:
+            """
+            delly call -x ${delly_exc} -o ${idPatient}.bcf -g ${genomeFile} ${bamTumor} ${bamNormal}
+            """
+    }
+    process runDellyFilter {
+        
+      input:
+        set idPatient, file(dellyBcffil) from DellyOutBcf
+      output:
+        set idPatient, file("${idPatient}.filter.vcf") into DellyfilterdBcf
+      script:
+            """
+                delly filter -f somatic -o ${dellyBcffil} -s ${delly_exc} ${idPatient}.filter.vcf
+            """
+    }
+
+    process ConvertBcf2vcf {
+        publishDir path: {params.outdir +"/Result/Delly/"}, mode: "move"
+      input:
+         set idPatient, file(dellyfilterBcf) from DellyfilterdBcf
+      output:
+         file "${idPatient}.delly.sv.vcf"
+      script:
+      """
+        bcftools view ${dellyfilterBcf} > ${idPatient}.delly.sv.vcf
+      """
+    }
+
+}
 
 // NGScheckmate
 if(params.runNGScheckmate){
@@ -1079,6 +1128,7 @@ def minimalInformationMessage() {
   checkAnalysis("\trunNGScheckmate:  ",params.runNGScheckmate)
   checkAnalysis("\trun Mutect2:      ",params.runMutect2)
   checkAnalysis("\trun GATK4 based CNV analysis:      ",params.rungatk4CNV)
+  checkAnalysis("\trun Delly:      ",params.runDelly)
   println LikeletUtils.print_green("-------------------------------------------------------------")
 }
 
