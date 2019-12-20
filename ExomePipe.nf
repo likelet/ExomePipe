@@ -8,6 +8,11 @@
 // - samtools/sambamba
 // - annovar
 // - bcftools
+// - freec 
+// - delly
+// - bedtools
+// - pyclone 
+// - R packages : data.table, reshape2
 
 version="0.0.3"
 
@@ -38,10 +43,15 @@ if (tsvPath) {
     log.info LikeletUtils.print_red("no sample table specified, plz specified a sample table ") 
     exit 1
 }
-fastqFiles.into{fastqforMapping;fastqforCheckMate}
+fastqFiles.into{FastqforMapping;FastqforCheckMate}
 
 //start message 
 startMessage()
+
+if(fastqFiles.length()==0) {
+    LikeletUtils.print_red("No sample loaded with yout sample tsv file, plz check the input")
+    exit 1
+}
 /*
 // Step 1 Alignment
 */
@@ -50,7 +60,7 @@ process bwa_aligment{
         tag { file_tag }
 
         input:
-        set idPatient, gender, status, idSample, file(fastqFile1), file(fastqFile2) from fastqforMapping
+        set idPatient, gender, status, idSample, file(fastqFile1), file(fastqFile2) from FastqforMapping
          set file(genomeFile), file(bwaIndex) from Channel.value([
             referenceMap.genomeFile,
             referenceMap.bwaIndex
@@ -231,10 +241,10 @@ bamsAll = bamsNormal.combine(bamsTumor, by : 0 )
     // It's removed from bamsAll Channel (same for genderNormal)
     // /!\ It is assumed that every sample are from the same patient
 
-(bamsAll,BamforFreeC,BamforFACET,BamforMSIsensor,BamforGATK4CNV,BamforGATKallelicCounts,BamForDelly) = bamsAll.map {
+(BamForMutect2,BamForMutect2Pon,BamforFreeC,BamforFACET,BamforMSIsensor,BamforGATK4CNV,BamforGATKallelicCounts,BamForDelly) = bamsAll.map {
     idPatient, idSampleTumor, bamTumor, baiTumor, idSampleNormal, bamNormal, baiNormal ->
     [idPatient, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor]
-}.into(6)
+}.into(8)
 
 //=======================================================================
 // start analysis for futher analysis 
@@ -247,6 +257,65 @@ Mutect2
 
 
 if(params.runMutect2){
+            if(params.ponfile){
+                pon.path=params.ponfile
+                PONfile=Channel.fromPath(pon.path,pon.path+".tbi")
+            }else{
+
+                BamForMutect2Pon.map{
+                    idPatient, idSampleNormal, bamNormal, baiNormal, idSampleTumor, bamTumor, baiTumor -> [idSampleNormal,bamNormal,baiNormal]
+                }.unique().set{BamForMutect2PonUnique}
+               process tumorModeForPON {
+
+                input:
+                set idSampleNormal, file(bamNormal), file(baiNormal) from BamForMutect2PonUnique
+                            file(intervals) from Channel.value(referenceMap.intervals)
+                            set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
+                                referenceMap.genomeFile,
+                                referenceMap.genomeIndex,
+                                referenceMap.genomeDict,
+                                referenceMap.dbsnp,
+                                referenceMap.dbsnpIndex
+                            ])
+                
+                output:
+                set idSampleNormal, file("${idSampleNormal}.vcf.gz") into NormalIndPonVCF
+
+                script:
+                """
+                 gatk --java-options "-Xmx${task.memory.toGiga()}g" \
+                            Mutect2 \
+                        -R ${genomeFile} \
+                        -I ${bamNormal} \
+                        -tumor ${idSampleNormal} \
+                        --disable-read-filter MateOnSameContigOrNoMappedMateReadFilter \
+                        -L ${intervals} \
+                        -O ${idSampleNormal}.vcf.gz
+
+                """
+            }
+
+
+
+             process createPONbyCollapesePON {
+                input:
+                    file vcffiles from NormalIndPonVCF.collect()
+                output:
+                    set file("PON.vcf.gz"),file("PON.vcf.gz.tbi") into PONfile
+                script:
+                """
+                    gatk --java-options "-Xmx${task.memory.toGiga()}g" \
+                    CreateSomaticPanelOfNormals \
+                    -vcfs 3_HG00190.vcf.gz \
+                    -vcfs 4_NA19771.vcf.gz \
+                    -vcfs 5_HG02759.vcf.gz \
+                    -O PON.vcf.gz
+                
+                """
+            }
+     
+            }
+            
             // Mutect 
             process RunMutect2 {
                     tag {idSampleTumor + "_vs_" + idSampleNormal}
@@ -256,7 +325,7 @@ if(params.runMutect2){
                     maxRetries 3
 
                     input:
-                        set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from bamsAll
+                        set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamForMutect2
                         file(intervals) from Channel.value(referenceMap.intervals)
                         set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
                             referenceMap.genomeFile,
@@ -265,6 +334,7 @@ if(params.runMutect2){
                             referenceMap.dbsnp,
                             referenceMap.dbsnpIndex
                         ])
+                        set file(ponfile),file(ponfiletbz) from PONfile
 
                     output:
                         set val("mutect2"), idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}_vs_${idSampleNormal}.vcf") into mutect2Output
@@ -279,6 +349,9 @@ if(params.runMutect2){
                             -I ${bamTumor}  -tumor ${idSampleTumor} \
                             -I ${bamNormal} -normal ${idSampleNormal} \
                             -L ${intervals} \
+                            -pon PON.vcf.gz \
+                            --af-of-alleles-not-in-resource 0.0000025 \
+                            --disable-read-filter MateOnSameContigOrNoMappedMateReadFilter \
                             -O ${idSampleTumor}_vs_${idSampleNormal}.vcf
                     """
             }
@@ -347,7 +420,7 @@ if(params.runMutect2){
 
                     output:
                             // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno.*_multianno.txt") into annovarTXT,annovarTXTforSamplefile
+                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno.*_multianno.txt") into annovarTXT,annovarTXTforSamplefile,AnnovarForSingleMaf
                         
                     script:
                     outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
@@ -377,7 +450,7 @@ if(params.runMutect2){
             }
 
             process Convert2MAF{
-                    tag "Mutect"
+                    tag "multiple maf"
 
                     publishDir path: {params.outdir +"/Result/Mutect2_merged_MAF"}, mode: "copy"
 
@@ -393,6 +466,23 @@ if(params.runMutect2){
 
                     """
             }
+
+            process Convert2singleMAF{
+                    tag "singleMaf"
+
+                    input:
+                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(annovarOut) from AnnovarForSingleMaf
+                    output:
+                        set idPatient,idSampleTumor,file("${idSampleTumor}.maf") into SingleMafForPyclone
+
+                    script:
+                    """
+                        echo -e "${annovarOut}\t${idSampleTumor}" > filelist.txt
+                        perl ${baseDir}/bin/Mutect_Annovar_to_MAF.pl filelist.txt > ${idSampleTumor}.maf
+
+                    """
+            }
+
 
             /*
             Step 9 MAF summary analysis with MAFtools 
@@ -428,7 +518,7 @@ Step 10 FreeC analysis pipe (optional)
 */
 
 if(params.runFreeC){
-            FreeCreferenceMap = defineFREECref()
+            FreeCreferenceMap = LikeletUtils.defineFREECref()
 
 
             // Generate pileup files
@@ -469,8 +559,8 @@ if(params.runFreeC){
 
                 output:
                     file "*"
-                    set idPatient, file("${pileTumor}_ratio.txt") into cnvFileForfreeC
-                
+                    set idPatient, idSampleTumor, file("${pileTumor}_ratio.txt") into CnvFileForfreeC
+                    set idPatient, idSampleTumor, file("*.pileup_CNVs") into CnvFileForPyclone
                 script:
                 
                 """
@@ -487,7 +577,7 @@ if(params.runFreeC){
                 publishDir path: {params.outdir +"/Result/GISTIC_INPUT/"}, mode: "move"
 
                 input: 
-                    set idPatient, file(ratioFIle) from cnvFileForfreeC
+                    set idPatient, file(ratioFIle) from CnvFileForfreeC
                     file chrLenFile from Channel.value([FreeCreferenceMap.chrLenFile])
                 output:
                     set idPatient,file("${idPatient}.gistic.seg") into GISTICsegFile
@@ -499,6 +589,8 @@ if(params.runFreeC){
                 """
             }
 
+            
+
            
 }
 
@@ -506,7 +598,7 @@ if(params.runFreeC){
 Step 11 Run analysis by FACET(optional)
 */
 if(params.runFACET){    
-            FACETrefMAP = defineFACETref()
+            FACETrefMAP = LikeletUtils.defineFACETref()
 
             process prepareFACETfile{
                 tag ""
@@ -856,33 +948,36 @@ if(params.runDelly){
 
     process ConvertBcf2vcf {
         publishDir path: {params.outdir +"/Result/Delly/"}, mode: "move"
-      input:
-         set idPatient, file(dellyfilterBcf) from DellyfilterdBcf
-      output:
-         file "${idPatient}.delly.sv.vcf"
-      script:
-      """
-        bcftools view ${dellyfilterBcf} > ${idPatient}.delly.sv.vcf
-      """
+        input:
+            set idPatient, file(dellyfilterBcf) from DellyfilterdBcf
+        output:
+            file "${idPatient}.delly.sv.vcf"
+        script:
+        """
+            bcftools view ${dellyfilterBcf} > ${idPatient}.delly.sv.vcf
+        """
     }
 
 }
+
+
+
 
 // NGScheckmate
 if(params.runNGScheckmate){
 
             NGScheckmateRefMap = defineNGScheckMateRef()
 
-            (fastqforCheckMateFile,fastqforCheckMate)=fastqforCheckMate.into(2)
-            fastqforCheckMateFile.map{
+            (FastqforCheckMateFile,FastqforCheckMate)=FastqforCheckMate.into(2)
+            FastqforCheckMateFile.map{
                 idPatient, gender, status, idSample, fastqFile1, fastqFile2 ->
                 "${fastqFile1.name}\t${fastqFile2.name}\t${idSample}\n"
             }.collectFile(name: "inputfile_forCheckmate.txt").set{InputFastqList}
 
-            fastqforCheckMate.map{
+            FastqforCheckMate.map{
                 idPatient, gender, status, idSample, fastqFile1, fastqFile2 ->
                 [fastqFile1,fastqFile2]
-            }.set{fastqforCheckMate}
+            }.set{FastqforCheckMate}
 
 
             process runNGScheckmateAnalysis{
@@ -891,7 +986,7 @@ if(params.runNGScheckmate){
                 publishDir path: {params.outdir +"/Result/NGScheckMate/"}, mode: "move"
 
                 input:
-                    file fastqFile from fastqforCheckMate.collect()
+                    file fastqFile from FastqforCheckMate.collect()
                     file fastqFilelist from InputFastqList
                     file snpPTfile from Channel.value([NGScheckmateRefMap.NGScheckmatePTfile])
                 output:
@@ -1047,6 +1142,60 @@ process runSequenza_R{
 
 */
 
+// run EXCAVATOR2
+
+if(params.runEXCAVATOR2){
+    process EXCAVATOR2_Prepare_Target {
+      storeDir params.storedir
+
+      input:
+        set file(genomeFile),file(genomeIndex),file(genomeDict),file(intervals) from Channel.value([
+                        referenceMap.genomeFile,
+                        referenceMap.genomeIndex,
+                        referenceMap.genomeDict,
+                        referenceMap.intervals
+                        ])
+      output:
+        // not applied 
+        file "MyTarget_w50000" into EXCAVATOR2_targetFile
+      script:
+      """
+        perl ${params.excavatarHOME}/TargetPerla.pl ${params.excavatarHOME}/SourceTarget.txt ${intervals} MyTarget_w50000 50000 hg19
+      """
+    }
+    
+    // from the manual 
+    // Before running EXCAVATORDataPrepare.pl you need to create a space delimited file with three
+    // fields: The absolute path to the .bam file you want to analyse, the path to the main sample output
+    // folder and the sample name. The sample name will be used as a prefix/suffix for output files.
+
+    process EXCAVATOR2_Prepare_Data {
+    
+
+      input:
+      
+      output:
+      
+      script:
+      """
+        perl EXCAVATORDataPrepare.pl ExperimentalFilePrepare.w50000.txt --processors ${task.cpus}} --target MyTarget_w50000 --assembly hg19
+      """
+    }
+
+    process EXCAVATORDataAnalysis {
+      input:
+      
+      output:
+      
+      script:
+      """
+      perl EXCAVATORDataAnalysis.pl ExperimentalFileAnalysis.w50K.txt \
+      --processors 6 --target MyTarget_w50K --assembly hg19 \
+      --output /.../OutEXCAVATOR2/Results_MyProject_w50K --mode paired
+      """
+    }
+}
+
 
 
 
@@ -1150,10 +1299,7 @@ def startMessage() {
   this.minimalInformationMessage()
 }
 
-def checkParamReturnFile(item) {
-  return file(params."${item}")
-}
-//adjusted  from Saret 
+
 def defineReferenceMap() {
   return [
     'dbsnp'            : checkParamReturnFile("dbsnp"),
@@ -1176,10 +1322,15 @@ def defineReferenceMap() {
     'knownTargetSnpIndex' : checkParamReturnFile("knownTargetSnpIndex")
   ]
 }
+
+def checkParamReturnFile(item) {
+  return file(params."${item}")
+}
+
 def defineFREECref() {
   return [
     'chrLenFile'            : checkParamReturnFile("freec_chrLen"),
-    'chrFile'               : params.freec_chrFile,
+    'chrFile'               : checkParamReturnFile("freec_chrFile"),
     // snp file for calculating BAF
     'snpfile'               : checkParamReturnFile("freec_snpfile"),
     // bed 
@@ -1187,13 +1338,13 @@ def defineFREECref() {
   ]
 }
 
-def defineFACETref() {
+ def defineFACETref() {
   return [
     'facetVcf'            : checkParamReturnFile("facet_vcf")
   ]
 }
 
-def defineNGScheckMateRef() {
+ def defineNGScheckMateRef() {
   return [
     'NGScheckmatePTfile'  : checkParamReturnFile("NGScheckmatePTfile")
   ]
@@ -1201,15 +1352,15 @@ def defineNGScheckMateRef() {
 
 
 // spread bam and intervals
-def generateIntervalsForVC(bams, intervals) {
+ def generateIntervalsForVC(bams, intervals) {
     def (bamsNew, bamsForVC) = bams.into(2)
     def (intervalsNew, vcIntervals) = intervals.into(2)
     def bamsForVCNew = bamsForVC.combine(vcIntervals)
     return [bamsForVCNew, bamsNew, intervalsNew]
 }
-def print_parameter(content, parameter){
+ def print_parameter(content, parameter){
     println LikeletUtils.print_cyan(content)+LikeletUtils.print_green(parameter)
 }
-def checkAnalysis(software,param){
+ def checkAnalysis(software,param){
 if(param) println LikeletUtils.print_yellow(software)+LikeletUtils.print_green(param)
 }

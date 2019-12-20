@@ -28,7 +28,7 @@ static def print_white = {  str -> LikeletUtils.ANSI_WHITE + str + LikeletUtils.
 
 // Check if a row has the expected number of item, adjusted from Sarek 
   static def checkNumberOfItem(row, number) {
-    if (row.size() != number) exit 1, "Malformed row in TSV file: ${row}, see --help for more information"
+    if (row.size() < number) exit 1, LikeletUtils.print_red("Malformed row in TSV file: ${row}, see --help for more information")
     return true
   } 
 
@@ -41,7 +41,7 @@ static def print_white = {  str -> LikeletUtils.ANSI_WHITE + str + LikeletUtils.
 
   // Return file if it exists
   static def returnFile(it) {
-    if (!file(it).exists()) exit 1, "Missing file in TSV file: ${it}, see --help for more information"
+    if (!file(it).exists()) exit 1, LikeletUtils.print_red("Missing file in TSV file: ${it}, see --help for more information")
     return file(it)
   }
 // extrct fastq information from tsvFile
@@ -83,8 +83,20 @@ static def sysucc_ascii() {
  
   }
 
+// other functions 
+
+
+//adjusted  from Saret 
+
+
+
+
+
 
   
 
 }
+
+
+
 

@@ -2,6 +2,7 @@ name: sysucc-exomeseq-1.0dev
 channels:
   - bioconda
   - conda-forge
+  - dranew
   - defaults
 dependencies:
   - fastp=0.19.5
@@ -22,6 +23,7 @@ dependencies:
   - bioconductor-clusterprofiler=3.8.1
   - bioconductor-reactomepa=1.24.0
   - bioconductor-pathview=1.20.0
+  - bioconductor-titancna=1.20.1
   - r-dplyr=0.7.6
   - r-readr=1.1.1
   - r-rmarkdown=1.10
@@ -31,3 +33,5 @@ dependencies:
   - r-venndiagram=1.6.20
   - bedtools=2.27.1
   - msisensor 
+  - pindel=0.2.5
+  
