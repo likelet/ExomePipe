@@ -60,26 +60,26 @@ process bwa_aligment{
         tag { file_tag }
 
         input:
-        set idPatient, gender, status, idSample, file(fastqFile1), file(fastqFile2) from FastqforMapping
-         set file(genomeFile), file(bwaIndex) from Channel.value([
-            referenceMap.genomeFile,
-            referenceMap.bwaIndex
-            ])
+            tuple idPatient, gender, status, idSample, file(fastqFile1), file(fastqFile2) from FastqforMapping
+            tuple file(genomeFile), file(bwaIndex) from Channel.value([
+                referenceMap.genomeFile,
+                referenceMap.bwaIndex
+                ])
 
 
         output:
-        set idPatient, status, idSample, file("${idSample}.bam") into mappedBam, mappedBamForQC
+            set idPatient, status, idSample, file("${idSample}.bam") into mappedBam, mappedBamForQC
         
         script:
-        file_tag_new=idSample
-        file_tag=file_tag_new
+            file_tag_new=idSample
+            file_tag=file_tag_new
 
-        readGroup = "@RG\\tID:niID\\tPU:noPU\\tSM:${idSample}\\tLB:${idSample}\\tPL:illumina"
+            readGroup = "@RG\\tID:niID\\tPU:noPU\\tSM:${idSample}\\tLB:${idSample}\\tPL:illumina"
 
-        """
-        bwa mem -t ${task.cpus} ${genomeFile} -M -R \"${readGroup}\" ${fastqFile1} ${fastqFile2} | \
-        samtools sort --threads ${task.cpus} -m 2G - > ${idSample}.bam
-        """
+            """
+            bwa mem -t ${task.cpus} ${genomeFile} -M -R \"${readGroup}\" ${fastqFile1} ${fastqFile2} | \
+            samtools sort --threads ${task.cpus} -m 2G - > ${idSample}.bam
+            """
         }
 
 
@@ -92,7 +92,7 @@ process BAMqcByQualiMap {
         publishDir  path: { params.outdir + "/Result/Qualimap" }, mode: 'move', overwrite: true
 
         input:
-            set idPatient, status, idSample, file(bam) from mappedBamForQC
+            tuple idPatient, status, idSample, file(bam) from mappedBamForQC
 
         output:
             file(idSample) into bamQCmappedReport
@@ -123,11 +123,11 @@ process MarkDuplicates {
         tag {idPatient + "-" + idSample}
 
         input:
-            set idPatient, status, idSample, file("${idSample}.bam") from mappedBam
+            tuple idPatient, status, idSample, file("${idSample}.bam") from mappedBam
 
         output:
-            set idPatient, status, idSample, file("${idSample}_${status}.md.bam"), file("${idSample}_${status}.md.bai") into duplicateMarkedBams,mdBamToJoin
-            set idPatient, status, idSample, val("${idSample}_${status}.md.bam"), val("${idSample}_${status}.md.bai") into markDuplicatesTSV
+            tuple idPatient, status, idSample, file("${idSample}_${status}.md.bam"), file("${idSample}_${status}.md.bai") into duplicateMarkedBams,mdBamToJoin
+            tuple idPatient, status, idSample, val("${idSample}_${status}.md.bam"), val("${idSample}_${status}.md.bai") into markDuplicatesTSV
             file ("${idSample}.bam.metrics") into markDuplicatesReport
 
         script:
@@ -165,8 +165,8 @@ process CreateRecalibrationTable {
             ])
 
         output:
-            set idPatient, status, idSample, file("${idSample}.recal.table") into recalibrationTable
-            set idPatient, status, idSample, val("${idSample}_${status}.md.bam"), val("${idSample}_${status}.md.bai"), val("${idSample}.recal.table") into recalibrationTableTSV
+            tuple idPatient, status, idSample, file("${idSample}.recal.table") into recalibrationTable
+            tuple idPatient, status, idSample, val("${idSample}_${status}.md.bam"), val("${idSample}_${status}.md.bai"), val("${idSample}.recal.table") into recalibrationTableTSV
 
         script:
         known = knownIndels.collect{ "--known-sites ${it}" }.join(' ')
@@ -193,8 +193,8 @@ process RecalibrateBam {
 
 
         input:
-            set idPatient, status, idSample, file(bam), file(bai), file(recalibrationReport) from recalibrationTable
-            set file(genomeFile), file(genomeIndex), file(genomeDict), file(intervals) from Channel.value([
+            tuple idPatient, status, idSample, file(bam), file(bai), file(recalibrationReport) from recalibrationTable
+            tuple file(genomeFile), file(genomeIndex), file(genomeDict), file(intervals) from Channel.value([
             referenceMap.genomeFile,
             referenceMap.genomeIndex,
             referenceMap.genomeDict,
@@ -202,8 +202,8 @@ process RecalibrateBam {
             ])
 
         output:
-            set idPatient, status, idSample, file("${idSample}.recal.bam"), file("${idSample}.recal.bai") into recalibratedBam, recalibratedBamForStats
-            set idPatient, status, idSample, val("${idSample}.recal.bam"), val("${idSample}.recal.bai") into recalibratedBamTSV
+            tuple idPatient, status, idSample, file("${idSample}.recal.bam"), file("${idSample}.recal.bai") into recalibratedBam, recalibratedBamForStats
+            tuple idPatient, status, idSample, val("${idSample}.recal.bam"), val("${idSample}.recal.bai") into recalibratedBamTSV
         script:
         """
         gatk --java-options -Xmx${task.memory.toGiga()}g \
@@ -268,7 +268,7 @@ if(params.runMutect2){
                process tumorModeForPON {
 
                 input:
-                set idSampleNormal, file(bamNormal), file(baiNormal) from BamForMutect2PonUnique
+                tuple idSampleNormal, file(bamNormal), file(baiNormal) from BamForMutect2PonUnique
                             file(intervals) from Channel.value(referenceMap.intervals)
                             set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
                                 referenceMap.genomeFile,
@@ -279,7 +279,7 @@ if(params.runMutect2){
                             ])
                 
                 output:
-                set idSampleNormal, file("${idSampleNormal}.vcf.gz") into NormalIndPonVCF
+                tuple idSampleNormal, file("${idSampleNormal}.vcf.gz") into NormalIndPonVCF
 
                 script:
                 """
@@ -301,7 +301,7 @@ if(params.runMutect2){
                 input:
                     file vcffiles from NormalIndPonVCF.collect()
                 output:
-                    set file("PON.vcf.gz"),file("PON.vcf.gz.tbi") into PONfile
+                    tuple file("PON.vcf.gz"),file("PON.vcf.gz.tbi") into PONfile
                 script:
                 """
                     gatk --java-options "-Xmx${task.memory.toGiga()}g" \
@@ -325,19 +325,19 @@ if(params.runMutect2){
                     maxRetries 3
 
                     input:
-                        set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamForMutect2
+                        tuple idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamForMutect2
                         file(intervals) from Channel.value(referenceMap.intervals)
-                        set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
+                        tuple file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
                             referenceMap.genomeFile,
                             referenceMap.genomeIndex,
                             referenceMap.genomeDict,
                             referenceMap.dbsnp,
                             referenceMap.dbsnpIndex
                         ])
-                        set file(ponfile),file(ponfiletbz) from PONfile
+                        tuple file(ponfile),file(ponfiletbz) from PONfile
 
                     output:
-                        set val("mutect2"), idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}_vs_${idSampleNormal}.vcf") into mutect2Output
+                        tuple val("mutect2"), idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}_vs_${idSampleNormal}.vcf") into mutect2Output
                         
                     script:
 
@@ -367,8 +367,8 @@ if(params.runMutect2){
 
                     publishDir path: {params.outdir +"/Result/Mutect2_filtered_VCF"}, mode: "copy"
                     input:
-                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcf) from mutect2Output
-                        set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
+                        tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcf) from mutect2Output
+                        tuple file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
                             referenceMap.genomeFile,
                             referenceMap.genomeIndex,
                             referenceMap.genomeDict
@@ -376,8 +376,8 @@ if(params.runMutect2){
 
                     output:
                             // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outputFile}") into vcfHardFiltered
-                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}.somatic.filter_mark.vcf.gz") into vcfMarkedFiltered
+                        tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outputFile}") into VcfHardFiltered_Annovar,VcfHardFiltered_VEP
+                        tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idSampleTumor}.somatic.filter_mark.vcf.gz") into vcfMarkedFiltered
 
                     script:
                     outputFile = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}.filtered.vcf"
@@ -402,42 +402,42 @@ if(params.runMutect2){
             }
 
             /*
-            Step 7  Annotated filter variants by Annovar 
+            Step 7  Annotated filter variants by Annovar/Vep
             */
 
-            process Annotate_Mutect_VCF{
-                    tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
+            if(param.annotater="annovar"){
+                process Annotate_Mutect_VCF{
+                        tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
 
-                    publishDir path: {params.outdir +"/Result/Annotaed_Filtered_VAFs"}, mode: "copy"
+                        publishDir path: {params.outdir +"/Result/Annotaed_Filtered_VAFs"}, mode: "copy"
 
-                    input:
-                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcfFiltered) from vcfHardFiltered
-                        set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
-                            referenceMap.genomeFile,
-                            referenceMap.genomeIndex,
-                            referenceMap.genomeDict
-                        ])
+                        input:
+                            tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcfFiltered) from VcfHardFiltered_Annovar
+                            tuple file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
+                                referenceMap.genomeFile,
+                                referenceMap.genomeIndex,
+                                referenceMap.genomeDict
+                            ])
 
-                    output:
-                            // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno.*_multianno.txt") into annovarTXT,annovarTXTforSamplefile,AnnovarForSingleMaf
-                        
-                    script:
-                    outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
+                        output:
+                                // we have this funny *_* pattern to avoid copying the raw calls to publishdir
+                            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno.*_multianno.txt") into annovarTXT,annovarTXTforSamplefile,AnnovarForSingleMaf
+                            
+                        script:
+                        outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
 
-                    """
-                        table_annovar.pl ${vcfFiltered} ${params.annovarDBpath} -buildver ${params.annovarDB} \
-                                -out ${outName}.somatic.anno -remove \
-                                -otherinfo \
-                                -protocol ${params.annovarProtocol} \
-                                -operation ${params.annovarOperation} \
-                                -nastring . \
-                                -vcfinput
+                        """
+                            table_annovar.pl ${vcfFiltered} ${params.annovarDBpath} -buildver ${params.annovarDB} \
+                                    -out ${outName}.somatic.anno -remove \
+                                    -otherinfo \
+                                    -protocol ${params.annovarProtocol} \
+                                    -operation ${params.annovarOperation} \
+                                    -nastring . \
+                                    -vcfinput
 
-                    """
-            }
-
-            /*
+                        """
+                }
+                 /*
             Step 8  Collapse and convert annoted file into MAF file for futher analysis 
             */
 
@@ -471,9 +471,9 @@ if(params.runMutect2){
                     tag "singleMaf"
 
                     input:
-                        set variantCaller, idPatient, idSampleNormal, idSampleTumor, file(annovarOut) from AnnovarForSingleMaf
+                        tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file(annovarOut) from AnnovarForSingleMaf
                     output:
-                        set idPatient,idSampleTumor,file("${idSampleTumor}.maf") into SingleMafForPyclone
+                        tuple idPatient,idSampleTumor,file("${idSampleTumor}.maf") into SingleMafForPyclone
 
                     script:
                     """
@@ -483,6 +483,79 @@ if(params.runMutect2){
                     """
             }
 
+            }
+
+            if(param.annotater=="vep"){
+
+                process Annotate_Mutect_VCF_withVeP{
+                        tag {variantCaller + "_" + idSampleTumor + "_vs_" + idSampleNormal}
+
+                        publishDir path: {params.outdir +"/Result/VEPannotation_result"}, mode: "copy"
+
+                        input:
+                            tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vcfFiltered) from VcfHardFiltered_VEP
+                            tuple file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
+                                referenceMap.genomeFile,
+                                referenceMap.genomeIndex,
+                                referenceMap.genomeDict
+                            ])
+
+                        output:
+                                // we have this funny *_* pattern to avoid copying the raw calls to publishdir
+                            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idPatient}_vep.vcf") into VepVCFForSingleMaf
+                            
+                        script:
+                        outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
+
+                        """
+                             vep --offline   --everything  \
+                                    --species homo_sapiens      \
+                                    --dir ${params.vepDB}\
+                                    --clin_sig_allele 0         \
+                                    --af  --af_gnomad --af_exac \
+                                    --fasta ${genomeFile} \
+                                    --stats_text --stats_file vep/01.1000/${id}_vep_summary.html       \
+                                    -i ${vcfFiltered}          \
+                                    --vcf                       \
+                                    -o ${idPatient}_vep.vcf   
+                        """
+                }
+
+
+                process VepVcf2Maf {
+
+                  publishDir path: {params.outdir +"/Result/VEPannotation_result"}, mode: "copy"
+
+                  input:
+                  tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vepVcf) from VepVCFForSingleMaf
+                            
+                  output:
+                   tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idPatient}_vep.maf") into VepMAF
+                  script:
+                  """
+                    perl vcf2maf.pl --input-vcf ${vepVcf} \
+                        --output-maf ${idPatient}_vep.maf \
+                        --tumor-id ${idSampleTumor} --normal-id ${idSampleNormal}
+                  """
+                }
+                 
+
+                process MergeMaf {
+                  input:
+                    file maffiles from VepMAF.collect()
+                  output:
+                    file "merged.maf" into Mutect_mergedMAF
+                  script:
+                  """ 
+                    cat *.maf | awk '$NR==1 || $0!~/header pattern/' > merged.maf
+                  
+                  """
+                }
+            }
+
+
+
+           
 
             /*
             Step 9 MAF summary analysis with MAFtools 

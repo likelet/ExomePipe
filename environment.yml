@@ -14,24 +14,9 @@ dependencies:
   - gatk4=4.0.12.0
   - r-ggplot2=3.1.0
   - r-pheatmap=1.0.10
-  - bioconductor-edger=3.22.5
-  - bioconductor-deseq2=1.20.0
-  - bioconductor-limma=3.36.5
-  - bioconductor-chipseeker=1.16.1
-  - bioconductor-fgsea=1.6.0
-  - bioconductor-bsgenome.hsapiens.ucsc.hg38=1.4.1
-  - bioconductor-clusterprofiler=3.8.1
-  - bioconductor-reactomepa=1.24.0
-  - bioconductor-pathview=1.20.0
-  - bioconductor-titancna=1.20.1
-  - r-dplyr=0.7.6
-  - r-readr=1.1.1
-  - r-rmarkdown=1.10
-  - r-ggsci=2.9
-  - r-circlize=0.4.5
-  - r-rcolorbrewer=1.1_2
-  - r-venndiagram=1.6.20
+  - bioconductor-maftools=2.4.0
   - bedtools=2.27.1
-  - msisensor 
+  - msisensor=0.5
   - pindel=0.2.5
-  
+  - vcf2maf=1.6.18
+  - ensemble-vep=100
