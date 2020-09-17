@@ -502,7 +502,7 @@ if(params.runMutect2){
 
                         output:
                                 // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-                            tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idPatient}_vep.vcf") into VepMAF
+                            tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idPatient}_vep.maf") into VepMAF
                             
                         script:
                         outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
@@ -517,7 +517,7 @@ if(params.runMutect2){
                                             --normal-id  ${idSampleNormal}      \
                                             --vep-data   ${vepDB}    \
                                             --species    homo_sapiens   \
-                                            --ncbi-build ${param.genome_version}   
+                                            --ncbi-build ${param.genomebuild}   
                                 
                                     
                         """
