@@ -68,7 +68,7 @@ process bwa_aligment{
 
 
         output:
-            set idPatient, status, idSample, file("${idSample}.bam") into mappedBam, mappedBamForQC
+            tuple idPatient, status, idSample, file("${idSample}.bam") into mappedBam, mappedBamForQC
         
         script:
             file_tag_new=idSample
@@ -152,8 +152,8 @@ process CreateRecalibrationTable {
         tag {idPatient + "-" + idSample}
 
         input:
-            set idPatient, status, idSample, file(bam), file(bai) from duplicateMarkedBams // realignedBam
-            set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex), file(knownIndels), file(knownIndelsIndex), file(intervals) from Channel.value([
+            tuple idPatient, status, idSample, file(bam), file(bai) from duplicateMarkedBams // realignedBam
+            tuple file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex), file(knownIndels), file(knownIndelsIndex), file(intervals) from Channel.value([
             referenceMap.genomeFile,
             referenceMap.genomeIndex,
             referenceMap.genomeDict,
@@ -270,7 +270,7 @@ if(params.runMutect2){
                 input:
                 tuple idSampleNormal, file(bamNormal), file(baiNormal) from BamForMutect2PonUnique
                             file(intervals) from Channel.value(referenceMap.intervals)
-                            set file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
+                            tuple file(genomeFile), file(genomeIndex), file(genomeDict), file(dbsnp), file(dbsnpIndex) from Channel.value([
                                 referenceMap.genomeFile,
                                 referenceMap.genomeIndex,
                                 referenceMap.genomeDict,
@@ -421,7 +421,7 @@ if(params.runMutect2){
 
                         output:
                                 // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-                            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno.*_multianno.txt") into annovarTXT,annovarTXTforSamplefile,AnnovarForSingleMaf
+                            tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${outName}.somatic.anno.*_multianno.txt") into annovarTXT,annovarTXTforSamplefile,AnnovarForSingleMaf
                             
                         script:
                         outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
@@ -502,42 +502,28 @@ if(params.runMutect2){
 
                         output:
                                 // we have this funny *_* pattern to avoid copying the raw calls to publishdir
-                            set variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idPatient}_vep.vcf") into VepVCFForSingleMaf
+                            tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idPatient}_vep.vcf") into VepMAF
                             
                         script:
                         outName = "${variantCaller}_${idSampleTumor}_vs_${idSampleNormal}"
 
                         """
-                             vep --offline   --everything  \
-                                    --species homo_sapiens      \
-                                    --dir ${params.vepDB}\
-                                    --clin_sig_allele 0         \
-                                    --af  --af_gnomad --af_exac \
-                                    --fasta ${genomeFile} \
-                                    --stats_text --stats_file vep/01.1000/${id}_vep_summary.html       \
-                                    -i ${vcfFiltered}          \
-                                    --vcf                       \
-                                    -o ${idPatient}_vep.vcf   
+                            
+                            perl vcf2maf.pl --input-vcf  ${vcfFiltered}       \
+                                            --output-maf ${idPatient}_vep.maf           \
+                                            --filter-vcf 0              \
+                                            --ref-fasta  ${genomeFile}      \
+                                            --tumor-id   ${idSampleTumor}       \
+                                            --normal-id  ${idSampleNormal}      \
+                                            --vep-data   ${vepDB}    \
+                                            --species    homo_sapiens   \
+                                            --ncbi-build ${param.genome_version}   
+                                
+                                    
                         """
                 }
 
 
-                process VepVcf2Maf {
-
-                  publishDir path: {params.outdir +"/Result/VEPannotation_result"}, mode: "copy"
-
-                  input:
-                  tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file(vepVcf) from VepVCFForSingleMaf
-                            
-                  output:
-                   tuple variantCaller, idPatient, idSampleNormal, idSampleTumor, file("${idPatient}_vep.maf") into VepMAF
-                  script:
-                  """
-                    perl vcf2maf.pl --input-vcf ${vepVcf} \
-                        --output-maf ${idPatient}_vep.maf \
-                        --tumor-id ${idSampleTumor} --normal-id ${idSampleNormal}
-                  """
-                }
                  
 
                 process MergeMaf {
@@ -599,13 +585,13 @@ if(params.runFreeC){
                 tag {idPatient}
 
                 input:
-                    set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamforFreeC
+                    tuple idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamforFreeC
                     file bedfile from Channel.value([
                             referenceMap.intervals
                         ])
 
                 output:
-                    set idPatient, idSampleNormal, file("${idSampleNormal}.pileup.gz"), idSampleTumor, file("${idSampleTumor}.pileup.gz") into pileupFileForConfig
+                    tuple idPatient, idSampleNormal, file("${idSampleNormal}.pileup.gz"), idSampleTumor, file("${idSampleTumor}.pileup.gz") into pileupFileForConfig
 
                 script:
                 
@@ -622,8 +608,8 @@ if(params.runFreeC){
                 publishDir path: {params.outdir +"/Result/FREEC_OUTPUT/"+idPatient}, mode: "link"
 
                 input:
-                    set idPatient, idSampleNormal, file(pileNormal), idSampleTumor, file(pileTumor)from pileupFileForConfig
-                    set file(chrLenFile), chrFile, file(snpfile),file(bedfile) from Channel.value([
+                    tuple idPatient, idSampleNormal, file(pileNormal), idSampleTumor, file(pileTumor)from pileupFileForConfig
+                    tuple file(chrLenFile), chrFile, file(snpfile),file(bedfile) from Channel.value([
                                                             FreeCreferenceMap.chrLenFile,
                                                             FreeCreferenceMap.chrFile,
                                                             FreeCreferenceMap.snpfile,
@@ -632,8 +618,8 @@ if(params.runFreeC){
 
                 output:
                     file "*"
-                    set idPatient, idSampleTumor, file("${pileTumor}_ratio.txt") into CnvFileForfreeC
-                    set idPatient, idSampleTumor, file("*.pileup_CNVs") into CnvFileForPyclone
+                    tuple idPatient, idSampleTumor, file("${pileTumor}_ratio.txt") into CnvFileForfreeC
+                    tuple idPatient, idSampleTumor, file("*.pileup_CNVs") into CnvFileForPyclone
                 script:
                 
                 """
@@ -650,10 +636,10 @@ if(params.runFreeC){
                 publishDir path: {params.outdir +"/Result/GISTIC_INPUT/"}, mode: "move"
 
                 input: 
-                    set idPatient, file(ratioFIle) from CnvFileForfreeC
+                    tuple idPatient, file(ratioFIle) from CnvFileForfreeC
                     file chrLenFile from Channel.value([FreeCreferenceMap.chrLenFile])
                 output:
-                    set idPatient,file("${idPatient}.gistic.seg") into GISTICsegFile
+                    tuple idPatient,file("${idPatient}.gistic.seg") into GISTICsegFile
                 
                 script:
                 
@@ -677,10 +663,10 @@ if(params.runFACET){
                 tag ""
 
                 input:
-                        set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamforFACET
+                        tuple idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamforFACET
                         file snpfile from Channel.value([FACETrefMAP.facetVcf])
                 output:
-                        set idPatient, file("${idPatient}.rm.chrM.csv.gz") into preparedFACETfile
+                        tuple idPatient, file("${idPatient}.rm.chrM.csv.gz") into preparedFACETfile
                 script:
                         """
                         # get pileup files 
@@ -700,7 +686,7 @@ if(params.runFACET){
 
 
                 input:
-                        set idPatient, file(csvFile) from preparedFACETfile
+                        tuple idPatient, file(csvFile) from preparedFACETfile
 
                 output:
                         file "${idPatient}*"
@@ -744,7 +730,7 @@ if(params.runMSIsensor){
                 publishDir path: {params.outdir +"/Result/MSIsensor/"}, mode: "move"
 
                 input:
-                    set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforMSIsensor
+                    tuple idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforMSIsensor
                     file MSIlistfile from MicrosatellitesListFile 
                     file bedfile from Channel.value([referenceMap.intervals])
 
@@ -768,7 +754,7 @@ if(params.rungatk4CNV){
             process preprocessTargegetlist {
                 tag ""
                 input:
-                    set file(genomeFile),file(genomeIndex),file(genomeDict),file(intervals) from Channel.value([
+                    tuple file(genomeFile),file(genomeIndex),file(genomeDict),file(intervals) from Channel.value([
                         referenceMap.genomeFile,
                         referenceMap.genomeIndex,
                         referenceMap.genomeDict,
@@ -790,12 +776,12 @@ if(params.rungatk4CNV){
             process GAKT4_CollectReadCounts{
                 tag {idPatient}
                     input:
-                        set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforGATK4CNV
+                        tuple idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforGATK4CNV
                         file Pintervals from ProcessedInterval
 
                         output:
 
-                        set idPatient,file("${idPatient}.tumor.counts.hdf5") into tumorCovFiles
+                        tuple idPatient,file("${idPatient}.tumor.counts.hdf5") into tumorCovFiles
                         file "${idPatient}.normal.counts.hdf5"  into normalCovFiles
 
                     script:
@@ -842,11 +828,11 @@ if(params.rungatk4CNV){
                 tag {idPatient}
                 input:
                     file NormalCNVpon
-                    set idPatient,file(tumorPcov) from tumorCovFiles
+                    tuple idPatient,file(tumorPcov) from tumorCovFiles
 
                 output:
-                    set idPatient,file("${idPatient}.denoisedCR.tsv") into TumorDenoiseReadCounts,TumorDenoiseReadCountsForCallSeg,TumorDenoiseReadCountsForPlot
-                    set idPatient,file("${idPatient}.standardizedCR.tsv"),file("${idPatient}.denoisedCR.tsv") into DiagnosisCRforPlot
+                    tuple idPatient,file("${idPatient}.denoisedCR.tsv") into TumorDenoiseReadCounts,TumorDenoiseReadCountsForCallSeg,TumorDenoiseReadCountsForPlot
+                    tuple idPatient,file("${idPatient}.standardizedCR.tsv"),file("${idPatient}.denoisedCR.tsv") into DiagnosisCRforPlot
                 script:
                             """
                             gatk --java-options "-Xmx${task.memory.toGiga()}g"   DenoiseReadCounts \
@@ -863,7 +849,7 @@ if(params.rungatk4CNV){
                 publishDir path: {params.outdir +"/Result/GATK4_CNV/plot"}, mode: "move"
 
                 input:
-                    set idPatient,file(standardizedCR),file(denoisedCR) from DiagnosisCRforPlot
+                    tuple idPatient,file(standardizedCR),file(denoisedCR) from DiagnosisCRforPlot
                     file genomeDict from Channel.value([referenceMap.genomeDict])
                 output:
     
@@ -887,8 +873,8 @@ if(params.rungatk4CNV){
             process GATK4_CollectAllelicCounts{
                 tag {idPatient}
                 input:
-                    set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforGATKallelicCounts
-                    set file(genomeFile),file(genomeDict),file(genomeIndex),file(knownTargetSnp),file(knownTargetSnpIndex) from Channel.value([
+                    tuple idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor)from BamforGATKallelicCounts
+                    tuple file(genomeFile),file(genomeDict),file(genomeIndex),file(knownTargetSnp),file(knownTargetSnpIndex) from Channel.value([
                         referenceMap.genomeFile,
                         referenceMap.genomeDict,
                         referenceMap.genomeIndex,
@@ -896,7 +882,7 @@ if(params.rungatk4CNV){
                         referenceMap.knownTargetSnpIndex
                         ])
                 output:
-                    set idPatient,file("${idPatient}.tumor.allelicCounts.tsv"),file("${idPatient}.normal.allelicCounts.tsv") into AllelicCountTSV
+                    tuple idPatient,file("${idPatient}.tumor.allelicCounts.tsv"),file("${idPatient}.normal.allelicCounts.tsv") into AllelicCountTSV
 
                 script:
                 """
@@ -919,11 +905,11 @@ if(params.rungatk4CNV){
                 tag {idPatient}
 
                 input:
-                    set idPatient, file(tumorAlliecCount),file(normalAlliecCount),file(tumorDenosiseCount) from AllelicCountTSV_TumorDenoiseReadCountsForCallSeg
+                    tuple idPatient, file(tumorAlliecCount),file(normalAlliecCount),file(tumorDenosiseCount) from AllelicCountTSV_TumorDenoiseReadCountsForCallSeg
 
                 output:
-                    set idPatient, file("${idPatient}.cr.seg") into TumorCRsegment
-                    set idPatient, file("${idPatient}.hets.tsv"),file("${idPatient}.modelFinal.seg") into TumorSegmentFileForPlot
+                    tuple idPatient, file("${idPatient}.cr.seg") into TumorCRsegment
+                    tuple idPatient, file("${idPatient}.hets.tsv"),file("${idPatient}.modelFinal.seg") into TumorSegmentFileForPlot
                 script:
                 """
                  gatk --java-options "-Xmx${task.memory.toGiga()}g"  ModelSegments \
@@ -937,10 +923,10 @@ if(params.rungatk4CNV){
             process GAKT4_CallCopyRatioSegments{
                  tag {idPatient}
                  input:
-                    set idPatient, file(tumorCRsegment) from TumorCRsegment
+                    tuple idPatient, file(tumorCRsegment) from TumorCRsegment
 
                 output:
-                    set idPatient, file("${idPatient}.called.seg") into TumorCallSegment
+                    tuple idPatient, file("${idPatient}.called.seg") into TumorCallSegment
 
                 script:
                 """
@@ -958,7 +944,7 @@ if(params.rungatk4CNV){
 
                 publishDir path: {params.outdir +"/Result/GATK4_CNV/plot"}, mode: "move"
                 input:
-                    set idPatient,file(tumorHetTsv),file(tumoFinalSeg),file(tumorDenosiseCount) from TumorSegment_TumorDenoiseReadCountsForPlot
+                    tuple idPatient,file(tumorHetTsv),file(tumoFinalSeg),file(tumorDenosiseCount) from TumorSegment_TumorDenoiseReadCountsForPlot
                     file genomeDict from Channel.value([referenceMap.genomeDict])
                 output:
     
@@ -993,15 +979,15 @@ if(params.runDelly){
      
       input:
     
-            set idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamForDelly
+            tuple idPatient, idSampleNormal, file(bamNormal), file(baiNormal), idSampleTumor, file(bamTumor), file(baiTumor) from BamForDelly
             file delly_exc  
-            set file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
+            tuple file(genomeFile), file(genomeIndex), file(genomeDict) from Channel.value([
                             referenceMap.genomeFile,
                             referenceMap.genomeIndex,
                             referenceMap.genomeDict
                         ])          
       output:
-            set idPatient, file("${idPatient}.delly.bcf") into DellyOutBcf
+            tuple idPatient, file("${idPatient}.delly.bcf") into DellyOutBcf
       script:
             """
             delly call -x ${delly_exc} -o ${idPatient}.bcf -g ${genomeFile} ${bamTumor} ${bamNormal}
@@ -1010,9 +996,9 @@ if(params.runDelly){
     process runDellyFilter {
         
       input:
-        set idPatient, file(dellyBcffil) from DellyOutBcf
+        tuple idPatient, file(dellyBcffil) from DellyOutBcf
       output:
-        set idPatient, file("${idPatient}.filter.vcf") into DellyfilterdBcf
+        tuple idPatient, file("${idPatient}.filter.vcf") into DellyfilterdBcf
       script:
             """
                 delly filter -f somatic -o ${dellyBcffil} -s ${delly_exc} ${idPatient}.filter.vcf
@@ -1022,7 +1008,7 @@ if(params.runDelly){
     process ConvertBcf2vcf {
         publishDir path: {params.outdir +"/Result/Delly/"}, mode: "move"
         input:
-            set idPatient, file(dellyfilterBcf) from DellyfilterdBcf
+            tuple idPatient, file(dellyfilterBcf) from DellyfilterdBcf
         output:
             file "${idPatient}.delly.sv.vcf"
         script:
@@ -1086,12 +1072,12 @@ process runADTex{
     tag {file_tag}
 
     input:
-        set val(samplename),file(tumorBam),file(normalBam)  from tumorBam_for_ADTex
+        tuple val(samplename),file(tumorBam),file(normalBam)  from tumorBam_for_ADTex
         file targetBed
 
     output:
 
-        set val(file_tag_new),file("${file_tag_new}_ADTex_cnv") into ADTexOutFolder
+        tuple val(file_tag_new),file("${file_tag_new}_ADTex_cnv") into ADTexOutFolder
 
     when: !params.runADTex
     shell:
@@ -1112,14 +1098,14 @@ process runStrelka2{
     tag {file_tag}
 
     input:
-        set val(samplename),file(tumorBam)  from tumorBam_for_strelka
-        set val(normalfilename),file(normalBam) from normalBam_for_strelka
+        tuple val(samplename),file(tumorBam)  from tumorBam_for_strelka
+        tuple val(normalfilename),file(normalBam) from normalBam_for_strelka
         file targetBed
         file genome_ref_exome
 
     output:
 
-        set val(file_tag_new),file("${file_tag_new}_somatic.*") into strelka_vcf_gz
+        tuple val(file_tag_new),file("${file_tag_new}_somatic.*") into strelka_vcf_gz
 
     when: !params.runStrelka2
 
@@ -1175,14 +1161,14 @@ process runSequenza_python{
 
         input:
 
-            set val(samplename),file(tumorbam) from tumorBam_for_sequenza
-            set val(normalName),file(normalbam) from normalBam_for_sequenza
+            tuple val(samplename),file(tumorbam) from tumorBam_for_sequenza
+            tuple val(normalName),file(normalbam) from normalBam_for_sequenza
             file targetBed
             file genome_gc_file
             file genome_ref_exome
 
         output:
-            set val(samplename),file("stage2.seqz.gz") into sequenza_bin_data
+            tuple val(samplename),file("stage2.seqz.gz") into sequenza_bin_data
 
         when: !params.runSequenza
         shell:
@@ -1201,7 +1187,7 @@ process runSequenza_R{
 
         input:
 
-        set val(samplename),file(bin_data) from sequenza_bin_data
+        tuple val(samplename),file(bin_data) from sequenza_bin_data
 
         output:
 
@@ -1222,7 +1208,7 @@ if(params.runEXCAVATOR2){
       storeDir params.storedir
 
       input:
-        set file(genomeFile),file(genomeIndex),file(genomeDict),file(intervals) from Channel.value([
+        tuple file(genomeFile),file(genomeIndex),file(genomeDict),file(intervals) from Channel.value([
                         referenceMap.genomeFile,
                         referenceMap.genomeIndex,
                         referenceMap.genomeDict,

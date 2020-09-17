@@ -5,8 +5,10 @@
    * picard/samtools 
    * gatk4 (CNV analysis)
    * mutect2
-   * annovar and annovar DB
-   * MAFtools 
+   * annovar and annovar DB(deprecated)
+   * vep and vep DB(very huge ~15G)
+   * vcf2maftools
+   * MAFtools(only avaliable when multiple sample paired envolved) 
    * some in-house script 
    * msisensor 
 
@@ -53,5 +55,4 @@ G15511    XX    1    D0ENMT    pathToFiles/D0ENMACXX111207.1_1.fastq.gz    pathT
 
 # Contribution
 
-Qi Zhao
-Xiaolong Zhang 
+Qi Zhao(zhaoqi@sysucc.org.cn)
