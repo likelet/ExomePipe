@@ -1,17 +1,20 @@
 
 
+// requrement 
+// samtools
+
 // run analysis at single tumorbam file 
 
 tumorbamPath = file(params.tumorbamPath)
 // the name of bamfile should be sampleID_sort_dedup_realigned_recal.bam. This required that bamfile must be deduplicated and base ralliberated
-maffile = file(maffiles)
+maffile = file(params.maf)
+
 
 freecFolder = params.outdir +"/Result/FREEC_OUTPUT/"
 
 // setting annotation file path 
 referenceMap = defineReferenceMap()
 
-patientID = params.patientID
 
 
 // samtools needed 
@@ -79,4 +82,90 @@ if(params.runpyclone && param.runFreeC){
     }
 
 
+}
+
+def helpMessage() {
+  // Display help message
+  log.info "    Usage:"
+  log.info "       nextflow run MultiExomeProcess.nf --profile <your profile> --maf <maffile> --tumorbamPath <path> "
+}
+
+def minimalInformationMessage() {
+  // Minimal information message
+  println LikeletUtils.print_green("-------------------------------------------------------------")
+  println LikeletUtils.print_green("                       Checking Parameters                   ")
+  println LikeletUtils.print_green("-------------------------------------------------------------")
+  print_parameter("\tCommand Line:   ", workflow.commandLine)
+  print_parameter("\tProfile:        ", workflow.profile)
+  print_parameter("\tProject Dir:    ", workflow.projectDir)
+  print_parameter("\tLaunch Dir:     ", workflow.launchDir)
+  print_parameter("\tWork Dir:       ", workflow.workDir)
+  print_parameter("\tOut Dir:        ", params.outdir)
+  print_parameter("\tTSV file:       ", tsvFile)
+  print_parameter("\tdbsnp:          ",referenceMap.dbsnp)
+  print_parameter("\tgenome:         ",referenceMap.genomeFile)
+  print_parameter("\tintervals:      ",referenceMap.intervals)
+  println LikeletUtils.print_green("-------------------------------------------------------------")
+  println LikeletUtils.print_green("#                       Run analysis                          ")
+  println LikeletUtils.print_green("-------------------------------------------------------------")
+  checkAnalysis("\trunFacet:         ",params.runFacet)
+  checkAnalysis("\trunADTex:         ",params.runADTex)
+  checkAnalysis("\trunstrelka:       ",params.runstrelka)
+  checkAnalysis("\trunSequenza:      ",params.runSequenza)
+  checkAnalysis("\trunQualimap:      ",params.runQualimap)
+  checkAnalysis("\trunFreeC:         ",params.runFreeC)
+  checkAnalysis("\trunFACET:         ",params.runFACET)
+  checkAnalysis("\trunMAFsummary:    ",params.runMAFsummary)
+  checkAnalysis("\trunMSIsensor:     ",params.runMSIsensor)
+  checkAnalysis("\trunNGScheckmate:  ",params.runNGScheckmate)
+  checkAnalysis("\trun Mutect2:      ",params.runMutect2)
+  checkAnalysis("\trun GATK4 based CNV analysis:      ",params.rungatk4CNV)
+  checkAnalysis("\trun Delly:      ",params.runDelly)
+  println LikeletUtils.print_green("-------------------------------------------------------------")
+}
+
+def exomeSeqMessage() {
+  // Display Sarek message
+    LikeletUtils.sysucc_ascii()
+    log.info ''
+    print LikeletUtils.print_yellow('==========================================================================')+"\n"
+    print LikeletUtils.print_yellow('=========        SYSUCC MultiExome seq data PIPELINE      ==========')+"\n"
+    print LikeletUtils.print_yellow('==========================================================================')+"\n"
+    log.info ''
+    log.info 'Usage: '
+    log.info 'Nextflow run MultiExomeProcess.nf '
+}
+
+def startMessage() {
+  // Display start message
+  this.exomeSeqMessage()
+  this.minimalInformationMessage()
+}
+
+
+def defineReferenceMap() {
+  return [
+    'dbsnp'            : checkParamReturnFile("dbsnp"),
+    'dbsnpIndex'       : checkParamReturnFile("dbsnpIndex"),
+    // genome reference dictionary
+    'genomeDict'       : checkParamReturnFile("genomeDict"),
+    // FASTA genome reference
+    'genomeFile'       : checkParamReturnFile("genomeFile"),
+    // genome .fai file
+    'genomeIndex'      : checkParamReturnFile("genomeIndex"),
+    // BWA index files
+    'bwaIndex'         : checkParamReturnFile("bwaIndex"),
+    // intervals file for spread-and-gather processes
+    'intervals'        : checkParamReturnFile("intervals"),
+    // VCFs with known indels (such as 1000 Genomes, Mill’s gold standard)
+    'knownIndels'      : checkParamReturnFile("knownIndels"),
+    'knownIndelsIndex' : checkParamReturnFile("knownIndelsIndex"),
+    // common snps located in the target region
+    'knownTargetSnp' : checkParamReturnFile("knownTargetSnp"),
+    'knownTargetSnpIndex' : checkParamReturnFile("knownTargetSnpIndex")
+  ]
+}
+
+def checkParamReturnFile(item) {
+  return file(params."${item}")
 }

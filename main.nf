@@ -19,7 +19,6 @@ version="0.0.3"
 //user options
 if (params.help) {
     this.helpMessage()
-
     exit 1
 }
 
@@ -52,6 +51,7 @@ if(fastqFiles.length()==0) {
     LikeletUtils.print_red("No sample loaded with yout sample tsv file, plz check the input")
     exit 1
 }
+
 /*
 // Step 1 Alignment
 */
@@ -62,13 +62,13 @@ process bwa_aligment{
         input:
             tuple idPatient, gender, status, idSample, file(fastqFile1), file(fastqFile2) from FastqforMapping
             tuple file(genomeFile), file(bwaIndex) from Channel.value([
-                referenceMap.genomeFile,
-                referenceMap.bwaIndex
-                ])
+                                                            referenceMap.genomeFile,
+                                                            referenceMap.bwaIndex
+                                                            ])
 
 
         output:
-            tuple idPatient, status, idSample, file("${idSample}.bam") into mappedBam, mappedBamForQC
+            tuple idPatient, status, idSample, file("${idSample}.bam") into MappedBam, MappedBamForQC
         
         script:
             file_tag_new=idSample
@@ -92,7 +92,7 @@ process BAMqcByQualiMap {
         publishDir  path: { params.outdir + "/Result/Qualimap" }, mode: 'move', overwrite: true
 
         input:
-            tuple idPatient, status, idSample, file(bam) from mappedBamForQC
+            tuple idPatient, status, idSample, file(bam) from MappedBamForQC
 
         output:
             file(idSample) into bamQCmappedReport
@@ -123,7 +123,7 @@ process MarkDuplicates {
         tag {idPatient + "-" + idSample}
 
         input:
-            tuple idPatient, status, idSample, file("${idSample}.bam") from mappedBam
+            tuple idPatient, status, idSample, file("${idSample}.bam") from MappedBam
 
         output:
             tuple idPatient, status, idSample, file("${idSample}_${status}.md.bam"), file("${idSample}_${status}.md.bai") into duplicateMarkedBams,mdBamToJoin
