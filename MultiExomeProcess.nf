@@ -157,5 +157,5 @@ def defineReferenceMap() {
 }
 
 def checkParamReturnFile(item) {
-  return file(params."${item}")
+  return file(params.genomes[params.genome]."${item}")
 }

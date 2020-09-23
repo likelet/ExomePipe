@@ -44,6 +44,14 @@ if (tsvPath) {
 }
 fastqFiles.into{FastqforMapping;FastqforCheckMate}
 
+//check genome 
+
+// Check if genome exists in the config file
+if (params.genomes && params.genome && !params.genomes.containsKey(params.genome)) {
+    exit 1, "The provided genome '${params.genome}' is not available in the iGenomes file. Currently the available genomes are ${params.genomes.keySet().join(", ")}"
+}
+
+
 //start message 
 startMessage()
 
@@ -1094,7 +1102,8 @@ process runADTex{
 
 
 // strelka2 analysis
-process runStrelka2{
+if(params.runStrelka2){
+    process runStrelka2{
     tag {file_tag}
 
     input:
@@ -1135,6 +1144,8 @@ process runStrelka2{
         """
 
         }
+}
+
 // gc base file for  run Sequenza
 process prepareSequenza{
     tag "produce GC file"
@@ -1318,6 +1329,7 @@ def minimalInformationMessage() {
   print_parameter("\tWork Dir:       ", workflow.workDir)
   print_parameter("\tOut Dir:        ", params.outdir)
   print_parameter("\tTSV file:       ", tsvFile)
+  print_parameter("\tGenome Version: ",params.genome)
   print_parameter("\tdbsnp:          ",referenceMap.dbsnp)
   print_parameter("\tgenome:         ",referenceMap.genomeFile)
   print_parameter("\tintervals:      ",referenceMap.intervals)
@@ -1383,7 +1395,7 @@ def defineReferenceMap() {
 }
 
 def checkParamReturnFile(item) {
-  return file(params."${item}")
+  return file(params.genomes[params.genome]."${item}")
 }
 
 def defineFREECref() {
