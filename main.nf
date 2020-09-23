@@ -1395,7 +1395,12 @@ def defineReferenceMap() {
 }
 
 def checkParamReturnFile(item) {
-  return file(params.genomes[params.genome]."${item}")
+    if(params.genome){
+        return file(params.genomes[params.genome]."${item}")
+    }else{
+        return file(params."${item}")
+    }
+  
 }
 
 def defineFREECref() {
