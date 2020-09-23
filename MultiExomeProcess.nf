@@ -87,7 +87,7 @@ if(params.runpyclone && param.runFreeC){
 def helpMessage() {
   // Display help message
   log.info "    Usage:"
-  log.info "       nextflow run MultiExomeProcess.nf --profile <your profile> --maf <maffile> --tumorbamPath <path> "
+  log.info "       nextflow run MultiExomeProcess.nf -c nextflow_M.config --profile <your profile> --maf <maffile> --tumorbamPath <path> "
 }
 
 def minimalInformationMessage() {
@@ -101,26 +101,16 @@ def minimalInformationMessage() {
   print_parameter("\tLaunch Dir:     ", workflow.launchDir)
   print_parameter("\tWork Dir:       ", workflow.workDir)
   print_parameter("\tOut Dir:        ", params.outdir)
-  print_parameter("\tTSV file:       ", tsvFile)
+  print_parameter("\tMAFfile:        ", params.maf)
+  print_parameter("\tTumor Bam:      ", params.tumorbam)
   print_parameter("\tdbsnp:          ",referenceMap.dbsnp)
   print_parameter("\tgenome:         ",referenceMap.genomeFile)
   print_parameter("\tintervals:      ",referenceMap.intervals)
   println LikeletUtils.print_green("-------------------------------------------------------------")
   println LikeletUtils.print_green("#                       Run analysis                          ")
   println LikeletUtils.print_green("-------------------------------------------------------------")
-  checkAnalysis("\trunFacet:         ",params.runFacet)
-  checkAnalysis("\trunADTex:         ",params.runADTex)
-  checkAnalysis("\trunstrelka:       ",params.runstrelka)
-  checkAnalysis("\trunSequenza:      ",params.runSequenza)
-  checkAnalysis("\trunQualimap:      ",params.runQualimap)
   checkAnalysis("\trunFreeC:         ",params.runFreeC)
-  checkAnalysis("\trunFACET:         ",params.runFACET)
-  checkAnalysis("\trunMAFsummary:    ",params.runMAFsummary)
-  checkAnalysis("\trunMSIsensor:     ",params.runMSIsensor)
-  checkAnalysis("\trunNGScheckmate:  ",params.runNGScheckmate)
-  checkAnalysis("\trun Mutect2:      ",params.runMutect2)
-  checkAnalysis("\trun GATK4 based CNV analysis:      ",params.rungatk4CNV)
-  checkAnalysis("\trun Delly:      ",params.runDelly)
+  checkAnalysis("\trunPyclone:       ",params.runpyclone)
   println LikeletUtils.print_green("-------------------------------------------------------------")
 }
 
@@ -133,7 +123,7 @@ def exomeSeqMessage() {
     print LikeletUtils.print_yellow('==========================================================================')+"\n"
     log.info ''
     log.info 'Usage: '
-    log.info 'Nextflow run MultiExomeProcess.nf '
+    log.info 'Nextflow run MultiExomeProcess.nf -c nextflow_M.config  --profile <your profile> --maf <maffile> --tumorbamPath <path>'
 }
 
 def startMessage() {
